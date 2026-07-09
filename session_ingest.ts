@@ -19,11 +19,15 @@ import { z } from "npm:zod@4";
 import { buildManifest } from "./db.ts";
 import { captureMessages, TranscriptSchema } from "./capture.ts";
 import { captureProvenance, ProvenanceSchema } from "./provenance.ts";
+import { captureCells, CellsSchema } from "./cells.ts";
+import { captureSkills, SkillsSchema } from "./skills.ts";
+import { captureHostCalls, HostCallsSchema } from "./hostcalls.ts";
 import { captureCorpus, CorpusSchema } from "./corpus.ts";
 import { captureInputs, InputsSchema } from "./inputs.ts";
 import { captureExternal, ExternalSchema } from "./external.ts";
 import { captureCredentials, CredentialsSchema } from "./credentials.ts";
 import { lockEnv, LockEnvSchema } from "./lockenv.ts";
+import { BundleManifestSchema, runSeal, SealArgsSchema } from "./bundle.ts";
 
 /** Parse a JSON-array-string method arg into a non-empty string[] (throws a clear error). */
 function parseJsonStringArray(name: string, raw: string): string[] {
@@ -136,13 +140,44 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.08.1",
+  version: "2026.07.11.6",
   globalArguments: GlobalArgsSchema,
   resources: {
     "manifest": {
       description:
         "Read-only summary of a Claude Science session's provenance state (counts, frames, reviewer passes, missing artifact files, remote-compute flag). Instance key = proj_id. Versioned; sha256 pinning belongs to capture.",
       schema: ManifestSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+    },
+    "cells": {
+      description:
+        "SENSITIVE: the FULL ordered execution sequence of a session — EVERY cell's source + language + cellIndex (large source offloaded to `body` files). The replay SCRIPT (complements the provenance GRAPH). Instance key = proj_id.",
+      schema: CellsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "host_calls": {
+      description:
+        "SENSITIVE: a session's REPLAYABLE host.* calls — each {method, args, response, isError} in call order, responses inlined from data_inline or resolved from data_ref tapes. Consumed by the session-execute host-replay shim. credentials_request responses scrubbed to presence only (no token). Instance key = proj_id.",
+      schema: HostCallsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "skills": {
+      description:
+        "SENSITIVE: the CS SKILLS a session used — each used skill's kernel.py (content-addressed body blob) + the exported symbols that judged it used. The injected context (e.g. figure-style -> apply_figure_style) a replay prepends. Instance key = proj_id.",
+      schema: SkillsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "bundle-manifest": {
+      description:
+        "The logical, order-stable index of a sealed session: every captured resource (name + swamp content checksum + content-ref) in canonical order, plus the reproducibility stamp (witnessed / replayable-nix / replayable-docker) and origin. The witness DIGEST over these items is produced by @vcjdeboer/session-witness seal_manifest (the seal-bundle workflow). Instance key = proj_id.",
+      schema: BundleManifestSchema,
       lifetime: "infinite",
       garbageCollection: 100,
     },
@@ -382,6 +417,111 @@ export const model = {
         return { dataHandles };
       },
     },
+    capture_cells: {
+      description:
+        "Freeze the FULL ordered execution sequence of a QUIESCENT session (EVERY cell's source + language + cellIndex) into a SENSITIVE `cells` resource (+ content-addressed `body` files for large source) — the replay SCRIPT that complements the provenance GRAPH. capture_provenance keeps only artifact-linked graph nodes; this keeps the setup/helper cells (that define namespace globals) a full replay needs. Reads a static clone; source never mutated; never reads a credential.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          createFileWriter: (
+            specName: string,
+            instanceName: string,
+            overrides?: { contentType?: string },
+          ) => { writeAll: (content: Uint8Array) => Promise<unknown> };
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureCells(
+          csRoot,
+          args.project,
+          orgId,
+          {
+            writeResource: context.writeResource,
+            createFileWriter: context.createFileWriter,
+            logger: context.logger,
+          },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_host_calls: {
+      description:
+        "Freeze a QUIESCENT session's REPLAYABLE host.* calls into a SENSITIVE `host_calls` resource ({method, args, response, isError} in call order; responses inlined from data_inline or resolved from data_ref tape files). Consumed by the session-execute host-replay shim so host.mcp/query_db/... replay offline. SECRET-SAFE: credentials_request responses scrubbed to presence only. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureHostCalls(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_skills: {
+      description:
+        "Freeze the CS SKILLS a QUIESCENT session used into a SENSITIVE `skills` resource (+ each used skill's kernel.py as a content-addressed `body` blob). Skill-loads aren't recorded, so the used set is inferred: a skill is used if any symbol its kernel.py exports appears in the session's cell source. The injected context (apply_figure_style etc.) a replay prepends. Read-only from disk; never a credential.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          createFileWriter: (
+            specName: string,
+            instanceName: string,
+            overrides?: { contentType?: string },
+          ) => { writeAll: (content: Uint8Array) => Promise<unknown> };
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureSkills(
+          csRoot,
+          args.project,
+          orgId,
+          {
+            writeResource: context.writeResource,
+            createFileWriter: context.createFileWriter,
+            logger: context.logger,
+          },
+        );
+        return { dataHandles };
+      },
+    },
     capture_provenance: {
       description:
         "Reconstruct the turn->execution->artifact->env provenance GRAPH of a QUIESCENT session into a SENSITIVE `provenance` resource (+ content-addressed `body` files for large source/stdout/stderr/env content). The cell node is collapsed into execution (canonical node = execution_log.id). Verbatim, deterministic, injection-gated; reads a static clone; source never mutated; never reads a credential.",
@@ -587,6 +727,12 @@ export const model = {
         });
         return { dataHandles };
       },
+    },
+    seal: {
+      description:
+        "Seal a captured session (#29): read each captured resource's swamp content checksum in canonical order, assemble the order-stable `bundle-manifest` (items + reproducibility stamp + origin). The independent witness DIGEST over these items is produced by @vcjdeboer/session-witness seal_manifest, wired by the seal-bundle workflow. Reads in-process via queryData; writes only its own bundle-manifest.",
+      arguments: SealArgsSchema,
+      execute: runSeal,
     },
   },
 };

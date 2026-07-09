@@ -114,6 +114,20 @@ export const QUERIES = {
   // scope for which workspace files this project actually touched. Ordered for determinism.
   execution_files: (pid: string) =>
     `SELECT id,frame_id,files_written,files_read FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY id`,
+  // host-replay: this project's host_call_log with the REPLAYABLE request+response — args_json +
+  // data_inline (small) or data_ref (a host_call_tapes file path) + error, in seq order. Distinct
+  // from host_calls_by_project (counts-only inventory). data_inline for credentials_request is
+  // scrubbed downstream (secret tokens never persist). pid gated PROJ_ID_RE.
+  host_calls_full: (pid: string) =>
+    `SELECT seq,method,args_json,` +
+    `(CASE WHEN method='credentials_request' THEN NULL ELSE data_inline END) data_inline,` +
+    `(CASE WHEN method='credentials_request' THEN NULL ELSE data_ref END) data_ref,` +
+    `error FROM host_call_log WHERE execution_log_id IN (SELECT id FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id='${pid}')) ORDER BY created_at,id`,
+  // cells: the FULL ordered execution sequence (every cell's source), the replay SCRIPT that
+  // complements the provenance GRAPH. capture_provenance keeps only artifact-linked nodes; this
+  // keeps ALL cells (incl. setup/helper cells that define namespace globals). pid gated PROJ_ID_RE.
+  cells_by_project: (pid: string) =>
+    `SELECT id,cell_index,language,source FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY cell_index,id`,
   // external: this project's host_call_log rows, aggregated downstream into a per-source
   // manifest. STRICT counts-only — NEVER selects args_json[1+]/data_inline/data_ref/error.
   // The MCP server is extracted IN SQL via json_extract($[0]) ONLY for method='mcp' AND ONLY
