@@ -29,14 +29,22 @@ already have a right to.
 | `capture_messages` | the verbatim, typed conversation transcript |
 | `capture_provenance` | the turn → execution → artifact → env provenance **graph** |
 | `capture_corpus` | an immutable, content-addressed **byte copy** of every artifact + project-scoped workspace file (sha-verified for drift) |
+| `capture_cells` | the **full ordered execution script** — *every* cell's source + language + cellIndex (the graph keeps only artifact-linked nodes; this keeps the setup/helper cells too) |
 | `capture_inputs` | a freeze of your Tier‑1 `/private/tmp` inputs (the "days-from-deletion" working data the corpus deliberately skips), by allow-listed root |
 | `capture_external` | a per-source inventory of the external databases the session called (counts + access dates + a release-pin gap slot) |
 | `capture_credentials` | a **presence-only** list of which credential providers the session used, with `vault.get` references for replay |
+| `capture_host_calls` | the session's **replayable** `host.*` calls (`mcp`/`query_db`/…) — request + response, with `credentials_request` tokens scrubbed |
+| `capture_skills` | the CS **skills** the session used — each skill's injected `kernel.py` (e.g. `figure-style` → `apply_figure_style()`), content-addressed |
 | `lock_env` | portable environment locks from the captured conda snapshot — a version-pinned Docker `environment.yml`+`Dockerfile`, plus a Nix scaffold |
+| `seal` | an order-stable `bundle-manifest` over the captured resources, stamped `witnessed`/`replayable-*`; its independent digest comes from `@vcjdeboer/session-witness`'s `seal_manifest` |
 
 Every record is a typed, schema-validated swamp resource, deterministic and
-witness-sealable, so a session can be inspected, diffed, replayed, and archived
-long after the originating app is gone.
+witness-sealable. And because the cells, env, host-calls, skills, and artifacts
+are *complete*, a captured session **re-runs outside the app** via
+[`@vcjdeboer/session-execute`](https://github.com/vcjdeboer/session-execute)'s
+`run-notebook` — papermill in the locked Docker env, with a host-replay shim that
+serves recorded `host.*` calls offline (or falls through to the live API in hybrid
+mode). Inspect, diff, replay, seal, and archive a session long after the app changes.
 
 ## Security & privacy by design
 
