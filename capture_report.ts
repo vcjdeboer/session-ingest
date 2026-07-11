@@ -44,13 +44,6 @@ const PNG_SIG = [0x89, 0x50, 0x4e, 0x47]; // \x89 P N G
 const isPng = (b: Uint8Array) =>
   b.length > 8 && PNG_SIG.every((v, i) => b[i] === v);
 
-function b64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-  // btoa is available in Deno's global scope
-  return btoa(s);
-}
-
 /** Pull the readable text out of a captured transcript turn. */
 function turnText(t: Record<string, unknown>): string {
   const blocks = (t.blocks as Array<Record<string, unknown>>) ?? [];
@@ -193,7 +186,10 @@ export const report = {
     }
 
     // Resolve the target session by name / proj_id (via each session's manifest).
-    const wantProj = String(ctx.methodArgs?.project ?? "");
+    // Capture methods pass `project`; `seal` passes `session` — accept either.
+    const wantProj = String(
+      ctx.methodArgs?.project ?? ctx.methodArgs?.session ?? "",
+    );
     const nameOf = async (rn: string) => {
       const mh = latestSpec(rn, "manifest");
       const man = mh ? await readJson(ctx, rn, mh.version) : null;
@@ -231,16 +227,25 @@ export const report = {
       manifest = (await nameOf(resourceName)).man;
     }
 
+    // The bundle-manifest is the LATEST version of the resource. Real
+    // dataRepository.findAllForModel only surfaces the latest version per name,
+    // so we resolve each facet's version from the bundle's item refs
+    // ("corpus/proj_x@4" → 4) rather than a per-spec lookup.
     const bundleH = latestSpec(resourceName, "bundle-manifest");
-    const bundle = bundleH
-      ? (await readJson(ctx, resourceName, bundleH.version)) ?? {}
-      : {};
+    const bundle =
+      (bundleH
+        ? await readJson(ctx, resourceName, bundleH.version)
+        : await readJson(ctx, resourceName)) ?? {};
     const items = (bundle.items as Array<{ name: string; ref: string }>) ?? [];
-
-    const readFacet = async (spec: string) => {
-      const h = latestSpec(resourceName, spec);
-      return h ? await readJson(ctx, resourceName, h.version) : null;
-    };
+    const facetVer: Record<string, number> = {};
+    for (const it of items) {
+      const v = /@(\d+)$/.exec(it.ref ?? "")?.[1];
+      if (v) facetVer[it.name] = Number(v);
+    }
+    const readFacet = async (spec: string) =>
+      facetVer[spec] != null
+        ? await readJson(ctx, resourceName, facetVer[spec])
+        : null;
     const transcript = await readFacet("transcript");
     const corpus = await readFacet("corpus");
     const cellsFacet = await readFacet("cells");
@@ -332,12 +337,15 @@ export const report = {
         pkgs: Number(l.packageCount ?? 0),
       }));
 
-    const sessionName =
-      ((manifest?.origin as Record<string, unknown>)?.project as Record<
+    // manifest isn't a sealed facet (not in the bundle) and may be unavailable
+    // via the real API — derive the display name from any facet's origin.
+    const originOf = (f: Record<string, unknown> | null) =>
+      ((f?.origin as Record<string, unknown>)?.project as Record<
         string,
         unknown
-      >)
-        ?.name as string ?? resourceName;
+      >)?.name as string | undefined;
+    const sessionName = originOf(manifest) ?? originOf(transcript) ??
+      originOf(corpus) ?? originOf(settingsFacet) ?? resourceName;
 
     // ---- prompts (userTyped turns, verbatim) ----
     const turns = (transcript?.turns as Array<Record<string, unknown>>) ?? [];
@@ -367,11 +375,14 @@ export const report = {
     const byVerdict = (vc.byVerdict as Record<string, number>) ?? {};
 
     // ---- print a few captured figures (PNG-sniff the corpus blobs) ----
-    const figures: Array<{ sha: string; dataUri: string; kb: number }> = [];
+    // Figures are LISTED here (checksum + size), not embedded — a swamp report is
+    // stored/displayed as text and size-capped; base64 images would truncate it.
+    // The visual (HTML) renderer embeds the actual bytes from the corpus.
+    const figures: Array<{ sha: string; kb: number }> = [];
     const arts = (corpus?.artifacts as Array<Record<string, unknown>>) ?? [];
     const seen = new Set<string>();
     for (const a of arts) {
-      if (figures.length >= 6) break;
+      if (figures.length >= 12) break;
       const sha = String(a.checksum ?? "");
       const size = Number(a.size ?? 0);
       const present = a.present === true || a.present === "True";
@@ -384,11 +395,7 @@ export const report = {
         1,
       );
       if (bytes && isPng(bytes)) {
-        figures.push({
-          sha: sha.slice(0, 12),
-          dataUri: `data:image/png;base64,${b64(bytes)}`,
-          kb: Math.round(size / 1024),
-        });
+        figures.push({ sha: sha.slice(0, 12), kb: Math.round(size / 1024) });
       }
     }
 
@@ -410,14 +417,24 @@ export const report = {
         }\` |`,
       );
     }
+    // Counts — prefer the manifest; else derive from the sealed facets so the
+    // report is complete even when the manifest isn't reachable via the API.
     const msg = (manifest?.messages as Record<string, number>) ?? {};
     const art = (manifest?.artifacts as Record<string, number>) ?? {};
+    const corpTotals = (corpus?.totals as Record<string, number>) ?? {};
+    const tByType = (transcript?.byType as Record<string, number>) ?? {};
+    const nArtifacts = art.distinct ?? corpTotals.files ?? "?";
+    const nFrames = manifest?.nFrames ??
+      (settingsFacet?.timeline as Record<string, unknown>)?.nFrames ?? "?";
+    const nMessages: number | string = msg.total ??
+      (transcript?.nTurns as number) ??
+      (Object.values(tByType).reduce((a, b) => a + b, 0) || "?");
+    const nEnvs = manifest?.nDistinctEnvs ??
+      (lockFacet?.locks as unknown[])?.length ?? "?";
     md.push(
-      `\n**${art.distinct ?? "?"}** artifacts · **${
-        manifest?.nFrames ?? "?"
-      }** frames · **${msg.total ?? "?"}** messages · **${
+      `\n**${nArtifacts}** artifacts · **${nFrames}** frames · **${nMessages}** messages · **${
         msg.userTyped ?? prompts.length
-      }** your prompts · **${manifest?.nDistinctEnvs ?? "?"}** conda envs\n`,
+      }** your prompts · **${nEnvs}** conda envs\n`,
     );
 
     // ---- the narrative arc: research question → plan → conclusion ----
@@ -613,7 +630,7 @@ export const report = {
 
     md.push(`\n## Captured figures (${figures.length})\n`);
     for (const f of figures) {
-      md.push(`![captured figure ${f.sha} — ${f.kb} KB](${f.dataUri})\n`);
+      md.push(`- \`${f.sha}\` — ${f.kb} KB (PNG)`);
     }
 
     return {

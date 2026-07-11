@@ -160,7 +160,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.14",
+  version: "2026.07.11.16",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -213,6 +213,18 @@ export const model = {
       toVersion: "2026.07.11.14",
       description:
         "capture-report gains the narrative arc: research question + plan (from the sealed plan_*.json artifact) alongside the conclusion. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.15",
+      description:
+        "capture-report resolves the session from methodArgs.project OR .session, so it renders the right session when triggered by seal. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.16",
+      description:
+        "capture-report: resolve facet versions from bundle refs (works via the real dataRepository) + list figures instead of embedding base64 (fits the report store). No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

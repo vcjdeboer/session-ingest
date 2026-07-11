@@ -55,7 +55,15 @@ Deno.test("capture-report: mines tools, skills, reviewer tally, prompts from sea
         nDistinctEnvs: 1,
       },
       2: {
-        items: [{ name: "cells", ref: `cells/${rn}@3`, checksum: "abc123" }],
+        // bundle-manifest references every facet's sealed version (the report
+        // resolves facet versions from these refs, as the real seal produces).
+        items: [
+          { name: "cells", ref: `cells/${rn}@3`, checksum: "c" },
+          { name: "skills", ref: `skills/${rn}@4`, checksum: "s" },
+          { name: "lockenv", ref: `lockenv/${rn}@5`, checksum: "l" },
+          { name: "transcript", ref: `transcript/${rn}@6`, checksum: "t" },
+          { name: "review", ref: `review/${rn}@7`, checksum: "r" },
+        ],
         stamp: "witnessed",
       },
       3: {
