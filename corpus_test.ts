@@ -4,7 +4,7 @@
  * disk); never touches real Claude Science data.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { type Corpus, captureCorpus, type CorpusSink } from "./corpus.ts";
+import { captureCorpus, type Corpus, type CorpusSink } from "./corpus.ts";
 import { preflightSqlite } from "./db.ts";
 import { sha256hexBytes } from "./store.ts";
 
@@ -35,7 +35,10 @@ function fakeSink() {
         const total = chunks.reduce((n, c) => n + c.length, 0);
         const buf = new Uint8Array(total);
         let o = 0;
-        for (const c of chunks) { buf.set(c, o); o += c.length; }
+        for (const c of chunks) {
+          buf.set(c, o);
+          o += c.length;
+        }
         files[`${spec}/${inst}`] = buf;
         return {};
       },
@@ -59,7 +62,9 @@ const WS_NOTE = enc("token: sk-ABCDEFGHIJKLMNOPQRSTUVWX here"); // tripwire
 const WS_W2 = enc("a,b\n1,2\n"); // under the SECOND root (multi-root)
 const WS_OTHER = enc('{"other":true}'); // other project → MUST NOT capture
 const WS_MCP = enc('{"mcp":1}'); // shared orphan → MUST NOT capture
-const WS_KEY = enc("-----BEGIN RSA PRIVATE KEY-----\nMIIabcd\n-----END RSA PRIVATE KEY-----\n"); // .pem → tripwire
+const WS_KEY = enc(
+  "-----BEGIN RSA PRIVATE KEY-----\nMIIabcd\n-----END RSA PRIVATE KEY-----\n",
+); // .pem → tripwire
 
 // Root-frame ids are UUIDs in real CS (and corpus.ts gates them with FRAME_ID_RE).
 const R1 = "aaaaaaaa-1111-4111-8111-111111111111";
@@ -67,9 +72,15 @@ const R2 = "bbbbbbbb-2222-4222-8222-222222222222";
 const R3 = "cccccccc-3333-4333-8333-333333333333";
 const RO = "dddddddd-4444-4444-8444-444444444444";
 
-interface Opt { allPresent?: boolean; remote?: boolean; noDrift?: boolean }
+interface Opt {
+  allPresent?: boolean;
+  remote?: boolean;
+  noDrift?: boolean;
+}
 
-async function fixture(opt: Opt = {}): Promise<{ org: string; shas: Record<string, string> }> {
+async function fixture(
+  opt: Opt = {},
+): Promise<{ org: string; shas: Record<string, string> }> {
   const org = await Deno.makeTempDir({ prefix: "corpus-fixture-" });
   const orgDir = `${org}/orgs/org1`;
   await Deno.mkdir(orgDir, { recursive: true });
@@ -94,8 +105,14 @@ async function fixture(opt: Opt = {}): Promise<{ org: string; shas: Record<strin
   await mk(`workspaces/${RO}/secret_other.json`, WS_OTHER);
   await mk("workspaces/_mcp-x/tool.json", WS_MCP);
   // sweep-ledger: R3 = a target root whose dir is gone; RO = other project (must be ignored)
-  await mk(`workspaces-sweep-ledger/${R3}`, enc('{"outcome":"swept","at":"2026-07-05T11:15:42Z"}'));
-  await mk(`workspaces-sweep-ledger/${RO}`, enc('{"outcome":"swept","at":"2026-07-05T00:00:00Z"}'));
+  await mk(
+    `workspaces-sweep-ledger/${R3}`,
+    enc('{"outcome":"swept","at":"2026-07-05T11:15:42Z"}'),
+  );
+  await mk(
+    `workspaces-sweep-ledger/${RO}`,
+    enc('{"outcome":"swept","at":"2026-07-05T00:00:00Z"}'),
+  );
 
   const shas = {
     a: await sha256hexBytes(A_BYTES),
@@ -114,7 +131,9 @@ async function fixture(opt: Opt = {}): Promise<{ org: string; shas: Record<strin
     { path: "/etc/hostname" }, // outside org tree → skip
   ]).replace(/'/g, "''");
 
-  const a6checksum = opt.allPresent ? "" : "'" + (await sha256hexBytes(enc("A6"))) + "'";
+  const a6checksum = opt.allPresent
+    ? ""
+    : "'" + (await sha256hexBytes(enc("A6"))) + "'";
   const a6row = opt.allPresent
     ? ""
     : `INSERT INTO artifact_versions VALUES ('A6','a6',1,NULL,'${R1}',${a6checksum},'proj_abc123/v6/missing.txt','python',0,NULL,NULL,NULL,6);`;
@@ -155,7 +174,8 @@ async function sha256File(p: string): Promise<string> {
 }
 
 Deno.test({
-  name: "corpus: artifact bytes copied + deduped + drift + prefix-normalize + unverifiable + missing",
+  name:
+    "corpus: artifact bytes copied + deduped + drift + prefix-normalize + unverifiable + missing",
   ignore: !HAVE,
   fn: async () => {
     const { org, shas } = await fixture();
@@ -190,7 +210,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "corpus: workspaces project-scoped (multi-root), path-safety, no-path bucket, lost, tripwire",
+  name:
+    "corpus: workspaces project-scoped (multi-root), path-safety, no-path bucket, lost, tripwire",
   ignore: !HAVE,
   fn: async () => {
     const { org } = await fixture();
@@ -199,25 +220,61 @@ Deno.test({
       const { corpus: c } = await captureCorpus(org, "gdh", undefined, sink);
       const rels = c.workspace.map((w) => w.relPath);
       // owned across BOTH roots (R1 + R2) captured
-      assert(rels.some((r) => r.endsWith(`workspaces/${R1}/handoff/w1.json`)), "R1 file");
-      assert(rels.some((r) => r.endsWith(`workspaces/${R1}/note.txt`)), "R1 note");
-      assert(rels.some((r) => r.endsWith(`workspaces/${R2}/w2.csv`)), "R2 file (multi-root)");
+      assert(
+        rels.some((r) => r.endsWith(`workspaces/${R1}/handoff/w1.json`)),
+        "R1 file",
+      );
+      assert(
+        rels.some((r) => r.endsWith(`workspaces/${R1}/note.txt`)),
+        "R1 note",
+      );
+      assert(
+        rels.some((r) => r.endsWith(`workspaces/${R2}/w2.csv`)),
+        "R2 file (multi-root)",
+      );
       // other project + shared orphan NOT captured
-      assert(!rels.some((r) => r.includes("secret_other")), "other project excluded");
+      assert(
+        !rels.some((r) => r.includes("secret_other")),
+        "other project excluded",
+      );
       assert(!rels.some((r) => r.includes("_mcp-x")), "shared orphan excluded");
-      assert(!Object.values(files).some((b) => b === WS_OTHER), "other bytes not stored");
+      assert(
+        !Object.values(files).some((b) => b === WS_OTHER),
+        "other bytes not stored",
+      );
       // path-safety: /etc/hostname (outside org) never captured
-      assert(!rels.some((r) => r.includes("hostname")), "outside-org path skipped");
+      assert(
+        !rels.some((r) => r.includes("hostname")),
+        "outside-org path skipped",
+      );
       // referenced-but-absent → lost
-      assert(c.lost.some((l) => (l.relPath ?? "").endsWith("gone.json")), "absent ref → lost");
+      assert(
+        c.lost.some((l) => (l.relPath ?? "").endsWith("gone.json")),
+        "absent ref → lost",
+      );
       // swept root R3 from ledger → lost; other project's swept RO NOT
-      assert(c.lost.some((l) => l.workspaceId === R3 && l.outcome === "swept"), "R3 swept lost");
-      assert(!c.lost.some((l) => l.workspaceId === RO), "other project swept ignored");
+      assert(
+        c.lost.some((l) => l.workspaceId === R3 && l.outcome === "swept"),
+        "R3 swept lost",
+      );
+      assert(
+        !c.lost.some((l) => l.workspaceId === RO),
+        "other project swept ignored",
+      );
       // no-path descriptor → a warning
-      assert(c.warnings.some((w) => /no-path descriptor/.test(w)), "no-path warned");
+      assert(
+        c.warnings.some((w) => /no-path descriptor/.test(w)),
+        "no-path warned",
+      );
       // tripwire: note.txt (sk- token) AND id_rsa.pem (PRIVATE KEY, credential extension) → counted
-      assert(c.totals.secretShapedCount >= 2, "tripwire counted note.txt + .pem");
-      assert(rels.some((r) => r.endsWith("id_rsa.pem")), ".pem still copied (sensitive bundle)");
+      assert(
+        c.totals.secretShapedCount >= 2,
+        "tripwire counted note.txt + .pem",
+      );
+      assert(
+        rels.some((r) => r.endsWith("id_rsa.pem")),
+        ".pem still copied (sensitive bundle)",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -225,13 +282,16 @@ Deno.test({
 });
 
 Deno.test({
-  name: "corpus: maxFileBytes records the big file by-reference (skipped, not stored)",
+  name:
+    "corpus: maxFileBytes records the big file by-reference (skipped, not stored)",
   ignore: !HAVE,
   fn: async () => {
     const { org, shas } = await fixture();
     try {
       const { sink, files } = fakeSink();
-      const { corpus: c } = await captureCorpus(org, "gdh", undefined, sink, { maxFileBytes: 100 });
+      const { corpus: c } = await captureCorpus(org, "gdh", undefined, sink, {
+        maxFileBytes: 100,
+      });
       const a7 = c.artifacts.find((a) => a.versionId === "A7")!;
       assertEquals(a7.skipped, true);
       assertEquals(a7.actualSha, shas.big); // still content-addressed
@@ -245,14 +305,24 @@ Deno.test({
 });
 
 Deno.test({
-  name: "corpus: type-stamp — witnessed on missing / DRIFT / remote; replayable only when clean + present + local",
+  name:
+    "corpus: type-stamp — witnessed on missing / DRIFT / remote; replayable only when clean + present + local",
   ignore: !HAVE,
   fn: async () => {
-    const check = async (opt: Parameters<typeof fixture>[0], want: string, why: string) => {
+    const check = async (
+      opt: Parameters<typeof fixture>[0],
+      want: string,
+      why: string,
+    ) => {
       const f = await fixture(opt);
       try {
         const { sink } = fakeSink();
-        const { corpus: c } = await captureCorpus(f.org, "gdh", undefined, sink);
+        const { corpus: c } = await captureCorpus(
+          f.org,
+          "gdh",
+          undefined,
+          sink,
+        );
         assertEquals(c.typeStamp, want, why);
       } finally {
         await Deno.remove(f.org, { recursive: true });
@@ -260,35 +330,65 @@ Deno.test({
     };
     await check({}, "witnessed", "a checksummed artifact is missing (A6)");
     // drift alone MUST force witnessed even with everything present + local (adv-1)
-    await check({ allPresent: true }, "witnessed", "A3 drifts (tamper evidence)");
-    await check({ allPresent: true, remote: true }, "witnessed", "remote compute");
+    await check(
+      { allPresent: true },
+      "witnessed",
+      "A3 drifts (tamper evidence)",
+    );
+    await check(
+      { allPresent: true, remote: true },
+      "witnessed",
+      "remote compute",
+    );
     // the ONLY replayable case: all present, local, and NO drift
-    await check({ allPresent: true, noDrift: true }, "replayable", "clean + present + local");
+    await check(
+      { allPresent: true, noDrift: true },
+      "replayable",
+      "clean + present + local",
+    );
   },
 });
 
 Deno.test({
-  name: "corpus: source DB + files byte-unchanged; no user_secrets ciphertext leak; deterministic",
+  name:
+    "corpus: source DB + files byte-unchanged; no user_secrets ciphertext leak; deterministic",
   ignore: !HAVE,
   fn: async () => {
     const { org } = await fixture();
     const orgDir = `${org}/orgs/org1`;
     try {
       const dbBefore = await sha256File(`${orgDir}/operon-cli.db`);
-      const fileBefore = await sha256File(`${orgDir}/artifacts/proj_abc123/v1/a.py`);
+      const fileBefore = await sha256File(
+        `${orgDir}/artifacts/proj_abc123/v1/a.py`,
+      );
       const a = fakeSink();
       const r1 = await captureCorpus(org, "gdh", undefined, a.sink);
       const b = fakeSink();
       const r2 = await captureCorpus(org, "gdh", undefined, b.sink);
       // non-mutation
-      assertEquals(await sha256File(`${orgDir}/operon-cli.db`), dbBefore, "DB untouched");
-      assertEquals(await sha256File(`${orgDir}/artifacts/proj_abc123/v1/a.py`), fileBefore, "artifact untouched");
+      assertEquals(
+        await sha256File(`${orgDir}/operon-cli.db`),
+        dbBefore,
+        "DB untouched",
+      );
+      assertEquals(
+        await sha256File(`${orgDir}/artifacts/proj_abc123/v1/a.py`),
+        fileBefore,
+        "artifact untouched",
+      );
       // no secret leak
       const blob = JSON.stringify(a.resources) +
         Object.values(a.files).map((f) => new TextDecoder().decode(f)).join("");
-      assert(!blob.includes("SUPERSECRETCIPHERTEXT"), "credential ciphertext leaked");
+      assert(
+        !blob.includes("SUPERSECRETCIPHERTEXT"),
+        "credential ciphertext leaked",
+      );
       // determinism
-      assertEquals(JSON.stringify(r1.corpus), JSON.stringify(r2.corpus), "two runs byte-identical");
+      assertEquals(
+        JSON.stringify(r1.corpus),
+        JSON.stringify(r2.corpus),
+        "two runs byte-identical",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -296,7 +396,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "corpus: a per-file copy failure warns WITHOUT leaking an absolute org path (H1-class, portable record)",
+  name:
+    "corpus: a per-file copy failure warns WITHOUT leaking an absolute org path (H1-class, portable record)",
   ignore: !HAVE,
   fn: async () => {
     const { org } = await fixture();
@@ -307,10 +408,19 @@ Deno.test({
       const { sink } = fakeSink();
       const { corpus: c } = await captureCorpus(org, "gdh", undefined, sink);
       // the failure is surfaced (root-relative) …
-      assert(c.warnings.some((w) => /w1\.json.*degraded/.test(w)), "the failing file is warned");
+      assert(
+        c.warnings.some((w) => /w1\.json.*degraded/.test(w)),
+        "the failing file is warned",
+      );
       // … but NO absolute org path leaks into the sealed, PORTABLE record (org-relative only)
-      assert(!JSON.stringify(c.warnings).includes(orgDir), "no abs org path in warnings (H1-class)");
-      assert(!JSON.stringify(c).includes(org), "no abs path anywhere in the record");
+      assert(
+        !JSON.stringify(c.warnings).includes(orgDir),
+        "no abs org path in warnings (H1-class)",
+      );
+      assert(
+        !JSON.stringify(c).includes(org),
+        "no abs path anywhere in the record",
+      );
     } finally {
       await Deno.chmod(blocked, 0o600).catch(() => {});
       await Deno.remove(org, { recursive: true });

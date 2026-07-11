@@ -35,9 +35,14 @@ async function fixture(
 ): Promise<string> {
   const orgDir = await Deno.makeTempDir({ prefix: "ing-fixture-" });
   await Deno.mkdir(`${orgDir}/orgs/org1`, { recursive: true });
-  await Deno.mkdir(`${orgDir}/orgs/org1/artifacts/proj_abc123/a`, { recursive: true });
+  await Deno.mkdir(`${orgDir}/orgs/org1/artifacts/proj_abc123/a`, {
+    recursive: true,
+  });
   // one artifact file present, one will be "missing"
-  await Deno.writeTextFile(`${orgDir}/orgs/org1/artifacts/proj_abc123/a/v1.csv`, "x");
+  await Deno.writeTextFile(
+    `${orgDir}/orgs/org1/artifacts/proj_abc123/a/v1.csv`,
+    "x",
+  );
   const db = `${orgDir}/orgs/org1/operon-cli.db`;
   // WAL mode so the fixture leaves a real .db + -wal + -shm triplet — this is
   // the scenario invariant A must defend (checkpoint-on-close mutation).
@@ -90,7 +95,8 @@ desc',1,2,'f1');
         ('proj_abc123/a/v4.tmp','sha4','python','envA','art4',1);
     `;
   } else if (opts.empty) {
-    sql += `CREATE TABLE artifact_versions (storage_path TEXT,checksum TEXT,language TEXT,env_snapshot_hash TEXT,artifact_id TEXT,is_intermediate INT);`;
+    sql +=
+      `CREATE TABLE artifact_versions (storage_path TEXT,checksum TEXT,language TEXT,env_snapshot_hash TEXT,artifact_id TEXT,is_intermediate INT);`;
   }
   await sqlite(db, sql);
   return orgDir;
@@ -104,11 +110,14 @@ const REV2 = "dddddddd-4444-4444-8444-444444444444";
 
 async function md5(path: string): Promise<string> {
   const buf = await Deno.readFile(path);
-  const h = await crypto.subtle.digest("MD5" as unknown as string, buf).catch(async () => {
-    // MD5 may be unavailable; fall back to SHA-256 for a stable fingerprint
-    return await crypto.subtle.digest("SHA-256", buf);
-  });
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const h = await crypto.subtle.digest("MD5" as unknown as string, buf).catch(
+    async () => {
+      // MD5 may be unavailable; fall back to SHA-256 for a stable fingerprint
+      return await crypto.subtle.digest("SHA-256", buf);
+    },
+  );
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 Deno.test("preflight detects sqlite3 (or reports why not)", () => {
@@ -122,20 +131,31 @@ Deno.test({
       const sql = (build as (p?: string) => string)("proj_deadbeef");
       assert(!/select\s+\*/i.test(sql), `${name} must not use SELECT *`);
       for (const tok of SECRET_TOKENS) {
-        assert(!sql.toLowerCase().includes(tok), `${name} must not name secret token ${tok}`);
+        assert(
+          !sql.toLowerCase().includes(tok),
+          `${name} must not name secret token ${tok}`,
+        );
       }
     }
   },
 });
 
-async function sqliteJson(db: string, sql: string): Promise<Record<string, unknown>[]> {
-  const out = await new Deno.Command("sqlite3", { args: ["-json", db, sql], stdout: "piped", stderr: "piped" }).output();
+async function sqliteJson(
+  db: string,
+  sql: string,
+): Promise<Record<string, unknown>[]> {
+  const out = await new Deno.Command("sqlite3", {
+    args: ["-json", db, sql],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
   const t = new TextDecoder().decode(out.stdout).trim();
   return t ? JSON.parse(t) : [];
 }
 
 Deno.test({
-  name: "host_calls_by_project: json_valid guard (no abort on malformed) + server derivation + scoping",
+  name:
+    "host_calls_by_project: json_valid guard (no abort on malformed) + server derivation + scoping",
   ignore: !HAVE_SQLITE,
   fn: async () => {
     const org = await Deno.makeTempDir({ prefix: "hcl-" });
@@ -157,15 +177,36 @@ Deno.test({
     }).output();
     try {
       // Must NOT abort despite the malformed row (json_valid guard).
-      const rows = await sqliteJson(db, QUERIES.host_calls_by_project("proj_abc123"));
+      const rows = await sqliteJson(
+        db,
+        QUERIES.host_calls_by_project("proj_abc123"),
+      );
       assertEquals(rows.length, 3, "only this project's 3 calls (E2 excluded)");
-      const byMethod = rows.map((r) => `${r.method}|${r.mcp_server ?? "null"}|${r.is_error}`);
-      assert(byMethod.includes("mcp|pubmed|0"), "valid mcp → server derived in SQL");
-      assert(byMethod.includes("mcp|null|0"), "malformed mcp → NULL server (no abort)");
-      assert(byMethod.includes("get_user_email|null|1"), "non-mcp → no server; error → is_error=1");
-      assert(!JSON.stringify(rows).includes("otherproj"), "other project's call scoped out");
+      const byMethod = rows.map((r) =>
+        `${r.method}|${r.mcp_server ?? "null"}|${r.is_error}`
+      );
+      assert(
+        byMethod.includes("mcp|pubmed|0"),
+        "valid mcp → server derived in SQL",
+      );
+      assert(
+        byMethod.includes("mcp|null|0"),
+        "malformed mcp → NULL server (no abort)",
+      );
+      assert(
+        byMethod.includes("get_user_email|null|1"),
+        "non-mcp → no server; error → is_error=1",
+      );
+      assert(
+        !JSON.stringify(rows).includes("otherproj"),
+        "other project's call scoped out",
+      );
       // never selects raw args_json content
-      assert(!JSON.stringify(rows).includes('"q"') && !Object.keys(rows[0]).includes("args_json"), "args_json never selected");
+      assert(
+        !JSON.stringify(rows).includes('"q"') &&
+          !Object.keys(rows[0]).includes("args_json"),
+        "args_json never selected",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -180,7 +221,9 @@ Deno.test({
     const db = `${org}/orgs/org1/operon-cli.db`;
     try {
       const sqlTally: Record<string, number> = {};
-      for (const r of await sqliteJson(db, QUERIES.messages_typed("proj_abc123"))) {
+      for (
+        const r of await sqliteJson(db, QUERIES.messages_typed("proj_abc123"))
+      ) {
         sqlTally[String(r.kind)] = Number(r.n);
       }
       const tsTally: Record<string, number> = {};
@@ -192,7 +235,11 @@ Deno.test({
         const k = classifyTurn(JSON.parse(String(r.msg_json)));
         tsTally[k] = (tsTally[k] ?? 0) + 1;
       }
-      assertEquals(tsTally, sqlTally, "classifyTurn diverged from the SQL CASE");
+      assertEquals(
+        tsTally,
+        sqlTally,
+        "classifyTurn diverged from the SQL CASE",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -212,8 +259,15 @@ Deno.test({
       const rows = await sqliteJson(path, "SELECT count(*) n FROM projects");
       assertEquals(Number(rows[0].n), 1);
       await cleanup();
-      assert(!(await Deno.stat(path).catch(() => null)), "clone dir should be removed");
-      assertEquals(await md5(db), before, "source must be untouched by cloneDb");
+      assert(
+        !(await Deno.stat(path).catch(() => null)),
+        "clone dir should be removed",
+      );
+      assertEquals(
+        await md5(db),
+        before,
+        "source must be untouched by cloneDb",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -221,7 +275,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "sec-1: cloneDb scrubs secret tables from the on-disk clone (no ciphertext, no secret table)",
+  name:
+    "sec-1: cloneDb scrubs secret tables from the on-disk clone (no ciphertext, no secret table)",
   ignore: !HAVE_SQLITE,
   fn: async () => {
     const org = await fixture();
@@ -234,13 +289,24 @@ Deno.test({
           path,
           "SELECT name FROM sqlite_master WHERE type='table'",
         )).map((r) => String(r.name));
-        assert(!tables.includes("user_secrets"), "user_secrets dropped from clone");
+        assert(
+          !tables.includes("user_secrets"),
+          "user_secrets dropped from clone",
+        );
         // and no ciphertext byte survives in the clone file itself (VACUUM reclaimed it)
         const bytes = await Deno.readFile(path);
         const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-        assert(!text.includes("SUPERSECRETCIPHERTEXT"), "ciphertext scrubbed from clone bytes");
+        assert(
+          !text.includes("SUPERSECRETCIPHERTEXT"),
+          "ciphertext scrubbed from clone bytes",
+        );
         // non-secret content still readable
-        assertEquals(Number((await sqliteJson(path, "SELECT count(*) n FROM projects"))[0].n), 1);
+        assertEquals(
+          Number(
+            (await sqliteJson(path, "SELECT count(*) n FROM projects"))[0].n,
+          ),
+          1,
+        );
       } finally {
         await cleanup();
       }
@@ -300,7 +366,8 @@ Deno.test({
       assertEquals(m.remoteCompute, true); // reviewer frame has compute_enabled=1
       assertEquals(
         m.missingFiles.slice().sort(),
-        ["proj_abc123/a/v2.png", "proj_abc123/a/v3.R", "proj_abc123/a/v4.tmp"].sort(),
+        ["proj_abc123/a/v2.png", "proj_abc123/a/v3.R", "proj_abc123/a/v4.tmp"]
+          .sort(),
       );
       assertEquals(m.credentialsScope, "deferred-to-capture");
     } finally {
@@ -310,7 +377,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "buildManifest: multi-session project splits headlines + reviewer checks per session",
+  name:
+    "buildManifest: multi-session project splits headlines + reviewer checks per session",
   ignore: !HAVE_SQLITE,
   fn: async () => {
     const org = await fixture({ multiSession: true });
@@ -348,10 +416,19 @@ Deno.test({
     const db = `${org}/orgs/org1/operon-cli.db`;
     try {
       assertEquals((await resolveProject(db, "gdh"))?.id, "proj_abc123");
-      assertEquals((await resolveProject(db, "proj_abc123"))?.id, "proj_abc123");
+      assertEquals(
+        (await resolveProject(db, "proj_abc123"))?.id,
+        "proj_abc123",
+      );
       assertEquals(await resolveProject(db, "nope"), null);
       // injection attempt is just a name that matches nothing — never reaches SQL
-      assertEquals(await resolveProject(db, "'; SELECT encrypted_value FROM user_secrets;--"), null);
+      assertEquals(
+        await resolveProject(
+          db,
+          "'; SELECT encrypted_value FROM user_secrets;--",
+        ),
+        null,
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -407,7 +484,8 @@ async function crashLeavesPendingWal(db: string): Promise<void> {
 }
 
 Deno.test({
-  name: "INVARIANT A: buildManifest never mutates .db/-wal with PENDING WAL frames (crashed-writer)",
+  name:
+    "INVARIANT A: buildManifest never mutates .db/-wal with PENDING WAL frames (crashed-writer)",
   ignore: !HAVE_SQLITE,
   sanitizeResources: false, // intentional SIGKILL of a child leaves the pipe
   sanitizeOps: false,
@@ -421,10 +499,17 @@ Deno.test({
     try {
       await crashLeavesPendingWal(db);
       const walSize = (await Deno.stat(`${db}-wal`)).size;
-      assert(walSize > 0, `NON-VACUITY: fixture must carry pending WAL frames (got ${walSize}B)`);
+      assert(
+        walSize > 0,
+        `NON-VACUITY: fixture must carry pending WAL frames (got ${walSize}B)`,
+      );
       const before = await fingerprint(durable);
       await buildManifest(org, "gdh"); // our -readonly path, as LAST connection
-      assertEquals(await fingerprint(durable), before, "source .db or -wal changed (mutating open!)");
+      assertEquals(
+        await fingerprint(durable),
+        before,
+        "source .db or -wal changed (mutating open!)",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -432,16 +517,24 @@ Deno.test({
 });
 
 Deno.test({
-  name: "ca-2: readViaClone reads via a disposable clone and deletes it (success)",
+  name:
+    "ca-2: readViaClone reads via a disposable clone and deletes it (success)",
   ignore: !HAVE_SQLITE,
   fn: async () => {
     const org = await fixture();
     const db = `${org}/orgs/org1/operon-cli.db`;
     try {
       const before = await cloneDirCount();
-      const rows = await readViaClone(db, "SELECT count(*) n FROM projects") as { n: number }[];
+      const rows = await readViaClone(
+        db,
+        "SELECT count(*) n FROM projects",
+      ) as { n: number }[];
       assertEquals(rows[0].n, 1);
-      assertEquals(await cloneDirCount(), before, "clone dir left behind on success");
+      assertEquals(
+        await cloneDirCount(),
+        before,
+        "clone dir left behind on success",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -449,15 +542,23 @@ Deno.test({
 });
 
 Deno.test({
-  name: "ca-2: readViaClone deletes the clone even when the read throws (finally)",
+  name:
+    "ca-2: readViaClone deletes the clone even when the read throws (finally)",
   ignore: !HAVE_SQLITE,
   fn: async () => {
     const org = await fixture();
     const db = `${org}/orgs/org1/operon-cli.db`;
     try {
       const before = await cloneDirCount();
-      await assertRejects(() => readViaClone(db, "SELECT bad syntax (("), Error);
-      assertEquals(await cloneDirCount(), before, "clone dir left behind on throw");
+      await assertRejects(
+        () => readViaClone(db, "SELECT bad syntax (("),
+        Error,
+      );
+      assertEquals(
+        await cloneDirCount(),
+        before,
+        "clone dir left behind on throw",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -468,7 +569,11 @@ Deno.test({
   name: "readViaClone refuses SQL naming a secret token",
   fn: async () => {
     await assertRejects(
-      () => readViaClone("/nonexistent.db", "SELECT encrypted_value FROM user_secrets"),
+      () =>
+        readViaClone(
+          "/nonexistent.db",
+          "SELECT encrypted_value FROM user_secrets",
+        ),
       Error,
       "secret token",
     );
@@ -484,12 +589,17 @@ Deno.test({
     try {
       const m = await buildManifest(org, "gdh");
       // the whole manifest, serialized, must not contain the secret ciphertext
-      assert(!JSON.stringify(m).includes("SUPERSECRETCIPHERTEXT"), "secret leaked into manifest");
+      assert(
+        !JSON.stringify(m).includes("SUPERSECRETCIPHERTEXT"),
+        "secret leaked into manifest",
+      );
       // no session-ingest clone dir left behind in the OS temp base
       const base = tmp.replace(/[^/]+$/, "");
       let leftover = false;
       for (const e of Deno.readDirSync(base)) {
-        if (e.isDirectory && e.name.startsWith("session-ingest-")) leftover = true;
+        if (e.isDirectory && e.name.startsWith("session-ingest-")) {
+          leftover = true;
+        }
       }
       assert(!leftover, "a session-ingest- temp clone was left behind");
     } finally {
@@ -540,7 +650,10 @@ Deno.test({
       const m = await buildManifest(org, "gdh");
       assertEquals(m.artifacts.versions, 0);
       assertEquals(m.nFrames, 2); // frames still counted
-      assert(m.warnings.some((w) => /degraded/.test(w)), "expected a degrade warning");
+      assert(
+        m.warnings.some((w) => /degraded/.test(w)),
+        "expected a degrade warning",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -563,7 +676,11 @@ Deno.test({
         await new Promise((r) => setTimeout(r, 40));
         await Deno.writeTextFile(wal, "0".repeat(5000));
       })();
-      await assertRejects(() => assertQuiescent(db, 200), Error, "actively written");
+      await assertRejects(
+        () => assertQuiescent(db, 200),
+        Error,
+        "actively written",
+      );
       await grow;
     } finally {
       await Deno.remove(dir, { recursive: true });

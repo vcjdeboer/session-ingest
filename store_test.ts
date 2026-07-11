@@ -16,11 +16,21 @@ import {
 } from "./store.ts";
 
 function fakeFileSink() {
-  const files: { spec: string; inst: string; contentType?: string; bytes: Uint8Array }[] = [];
+  const files: {
+    spec: string;
+    inst: string;
+    contentType?: string;
+    bytes: Uint8Array;
+  }[] = [];
   const sink: FileSink = {
     createFileWriter: (spec, inst, overrides) => ({
       writeAll: (c: Uint8Array) => {
-        files.push({ spec, inst, contentType: overrides?.contentType, bytes: c });
+        files.push({
+          spec,
+          inst,
+          contentType: overrides?.contentType,
+          bytes: c,
+        });
         return Promise.resolve({});
       },
     }),
@@ -71,11 +81,23 @@ Deno.test("makeStore is per-invocation: two stores keep independent dedup maps",
 });
 
 function fakeBlobSink() {
-  const files: { spec: string; inst: string; contentType?: string; bytes: Uint8Array; via: string }[] = [];
+  const files: {
+    spec: string;
+    inst: string;
+    contentType?: string;
+    bytes: Uint8Array;
+    via: string;
+  }[] = [];
   const sink: BlobSink = {
     createFileWriter: (spec, inst, overrides) => ({
       writeAll: (c: Uint8Array) => {
-        files.push({ spec, inst, contentType: overrides?.contentType, bytes: c, via: "writeAll" });
+        files.push({
+          spec,
+          inst,
+          contentType: overrides?.contentType,
+          bytes: c,
+          via: "writeAll",
+        });
         return Promise.resolve({});
       },
       writeStream: async (s: ReadableStream<Uint8Array>) => {
@@ -84,8 +106,17 @@ function fakeBlobSink() {
         const total = chunks.reduce((n, c) => n + c.length, 0);
         const buf = new Uint8Array(total);
         let o = 0;
-        for (const c of chunks) { buf.set(c, o); o += c.length; }
-        files.push({ spec, inst, contentType: overrides?.contentType, bytes: buf, via: "writeStream" });
+        for (const c of chunks) {
+          buf.set(c, o);
+          o += c.length;
+        }
+        files.push({
+          spec,
+          inst,
+          contentType: overrides?.contentType,
+          bytes: buf,
+          via: "writeStream",
+        });
         return {};
       },
     }),
@@ -138,8 +169,12 @@ Deno.test("makeBlobStore dedups identical bytes by sha SET (one blob, deduped=tr
   try {
     const store = makeBlobStore();
     const { sink, files } = fakeBlobSink();
-    const r1 = await store.copyFileToBlob(src1, sink, { streamThreshold: 1024 });
-    const r2 = await store.copyFileToBlob(src2, sink, { streamThreshold: 1024 });
+    const r1 = await store.copyFileToBlob(src1, sink, {
+      streamThreshold: 1024,
+    });
+    const r2 = await store.copyFileToBlob(src2, sink, {
+      streamThreshold: 1024,
+    });
     assertEquals(r1.sha, r2.sha);
     assertEquals(r1.deduped, false);
     assertEquals(r2.deduped, true);
@@ -196,10 +231,17 @@ Deno.test("makeBlobStore noFollow refuses to read through a symlink at the captu
     const { sink, files } = fakeBlobSink();
     // legacy (no noFollow) follows the link — this is exactly the gap the guard closes
     await store.copyFileToBlob(link, sink, { streamThreshold: 1024 });
-    assertEquals(new TextDecoder().decode(files[0].bytes), "SENSITIVE-OUT-OF-TREE");
+    assertEquals(
+      new TextDecoder().decode(files[0].bytes),
+      "SENSITIVE-OUT-OF-TREE",
+    );
     // noFollow: refuse to open through the symlink (no bytes read from the target)
     await assertRejects(
-      () => store.copyFileToBlob(link, sink, { noFollow: true, streamThreshold: 1024 }),
+      () =>
+        store.copyFileToBlob(link, sink, {
+          noFollow: true,
+          streamThreshold: 1024,
+        }),
       Error,
     );
     assertEquals(files.length, 1, "guarded call wrote nothing");

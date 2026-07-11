@@ -34,6 +34,8 @@ export const CANONICAL_ORDER = [
   "cells",
   "skills",
   "host_calls",
+  // Appended (.11.11): the independent reviewer's sealed verdicts (capture_review).
+  "review",
 ] as const;
 
 /** One sealable resource: its spec name, swamp content checksum, and content-ref. */

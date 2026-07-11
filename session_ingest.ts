@@ -22,6 +22,7 @@ import { captureProvenance, ProvenanceSchema } from "./provenance.ts";
 import { captureCells, CellsSchema } from "./cells.ts";
 import { captureSkills, SkillsSchema } from "./skills.ts";
 import { captureHostCalls, HostCallsSchema } from "./hostcalls.ts";
+import { captureReview, ReviewSchema } from "./review.ts";
 import { captureCorpus, CorpusSchema } from "./corpus.ts";
 import { captureInputs, InputsSchema } from "./inputs.ts";
 import { captureExternal, ExternalSchema } from "./external.ts";
@@ -157,7 +158,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.10",
+  version: "2026.07.11.12",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -188,6 +189,18 @@ export const model = {
         "Add the capture-report report (facets, tools/skills, reviewer tally, prompts, figures); no globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.07.11.12",
+      description:
+        "capture-report: add required `name` field so the report loads; render sealed review detail; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.11",
+      description:
+        "Add capture_review (seal the independent reviewer's verification_checks) + review facet in the seal; capture-report renders the sealed reviewer detail; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     "manifest": {
@@ -209,6 +222,14 @@ export const model = {
       description:
         "SENSITIVE: a session's REPLAYABLE host.* calls — each {method, args, response, isError} in call order, responses inlined from data_inline or resolved from data_ref tapes. Consumed by the session-execute host-replay shim. credentials_request responses scrubbed to presence only (no token). Instance key = proj_id.",
       schema: HostCallsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "review": {
+      description:
+        "SENSITIVE: the INDEPENDENT REVIEWER's verdicts — CS's out-of-band verification_checks ({verdict, severity, claim, evidence, reviewerModel} in time order) + the verdict tally. Seals WHAT was reviewed and WHY, so the capture-report shows reviewer detail from sealed data (not just the manifest tally). claim/evidence are analysis prose, never a credential. Instance key = proj_id.",
+      schema: ReviewSchema,
       lifetime: "infinite",
       garbageCollection: 100,
       sensitive: true,
@@ -524,6 +545,35 @@ export const model = {
         const csRoot = resolveCsRoot(args, context.globalArgs);
         const orgId = args.orgId || context.globalArgs.orgId || undefined;
         const { dataHandles } = await captureHostCalls(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_review: {
+      description:
+        "Freeze a QUIESCENT session's INDEPENDENT-REVIEWER verdicts (CS's out-of-band verification_checks: verdict/severity/claim/evidence/reviewerModel, in time order) into a SENSITIVE `review` resource + verdict tally. Seals WHAT the reviewer flagged and WHY so the capture-report renders reviewer detail from sealed data, not just the manifest count. claim/evidence are analysis prose, never a credential. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureReview(
           csRoot,
           args.project,
           orgId,

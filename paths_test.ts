@@ -91,7 +91,9 @@ Deno.test("validateRoot ACCEPTS a sensitive (out-of-base) root ONLY with allowSe
   const dir = await Deno.makeTempDir({ prefix: "vr-sens-" });
   const dirReal = await Deno.realPath(dir);
   try {
-    const denied = await validateRoot(dirReal, { allowedBases: ["/private/tmp"] });
+    const denied = await validateRoot(dirReal, {
+      allowedBases: ["/private/tmp"],
+    });
     assert(!denied.ok, "denied without opt-in");
     const allowed = await validateRoot(dirReal, {
       allowedBases: ["/private/tmp"],

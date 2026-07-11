@@ -50,7 +50,10 @@ const CHK1 = "1".repeat(64);
 const CHK2 = "2".repeat(64);
 const BIG = "S".repeat(3000); // > BODY_INLINE_CAP (2000) — offloads
 // a large env snapshot so packages offload
-const PKGS = Array.from({ length: 120 }, (_, i) => `{"name":"biopython${i}","version":"1.${i}","channel":"bioconda"}`).join(",");
+const PKGS = Array.from(
+  { length: 120 },
+  (_, i) => `{"name":"biopython${i}","version":"1.${i}","channel":"bioconda"}`,
+).join(",");
 const ENV_CONTENT = `{"environment_name":"python","packages":[${PKGS}]}`;
 
 interface FixtureOpts {
@@ -79,7 +82,9 @@ async function fixture(opts: FixtureOpts = {}): Promise<string> {
   const filesWritten = opts.objectFiles
     ? `[{"path":"${WROTE_PATH}","sha256":"${CHK2}","preview_content_type":"image/jpeg"}]`
     : `["${ARTV2}"]`;
-  const filesRead = opts.objectFiles ? `[{"path":"${READ_PATH}"}]` : `["${ARTV1}"]`;
+  const filesRead = opts.objectFiles
+    ? `[{"path":"${READ_PATH}"}]`
+    : `["${ARTV1}"]`;
   await sqlite(
     db,
     `PRAGMA journal_mode=WAL;
@@ -114,7 +119,8 @@ async function fixture(opts: FixtureOpts = {}): Promise<string> {
 
 async function sha256File(p: string): Promise<string> {
   const h = await crypto.subtle.digest("SHA-256", await Deno.readFile(p));
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 const edgeKinds = (p: Provenance) => new Set(p.edges.map((e) => e.kind));
@@ -128,29 +134,69 @@ Deno.test({
     const org = await fixture();
     try {
       const { sink, resources } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       assertEquals(resources["provenance/proj_abc123"], p);
 
       // nodes: two artifacts, one execution (cell collapsed, keyed by execution_log.id), one env
-      assertEquals(p.nodes.artifacts.map((a) => a.id).sort(), [ARTV1, ARTV2].sort());
+      assertEquals(
+        p.nodes.artifacts.map((a) => a.id).sort(),
+        [ARTV1, ARTV2].sort(),
+      );
       assertEquals(p.nodes.executions.map((e) => e.id), [EXEC]);
       assertEquals(p.nodes.envs.map((e) => e.id), [ENVH]);
 
       // ALL edge kinds present + correct
       assertEquals(
         edgeKinds(p),
-        new Set(["produces", "producedBy", "wrote", "read", "inEnv", "ranInEnv", "dependsOn"]),
+        new Set([
+          "produces",
+          "producedBy",
+          "wrote",
+          "read",
+          "inEnv",
+          "ranInEnv",
+          "dependsOn",
+        ]),
       );
-      assert(hasEdge(p, ROOT, ARTV2, "produces"), "turn->artifact via _artifact_refs.version_id");
-      assert(hasEdge(p, ARTV2, EXEC, "producedBy"), "artifact->execution via producing_cell_id");
-      assert(hasEdge(p, EXEC, ARTV2, "wrote"), "execution->file via files_written");
+      assert(
+        hasEdge(p, ROOT, ARTV2, "produces"),
+        "turn->artifact via _artifact_refs.version_id",
+      );
+      assert(
+        hasEdge(p, ARTV2, EXEC, "producedBy"),
+        "artifact->execution via producing_cell_id",
+      );
+      assert(
+        hasEdge(p, EXEC, ARTV2, "wrote"),
+        "execution->file via files_written",
+      );
       assert(hasEdge(p, EXEC, ARTV1, "read"), "execution->file via files_read");
-      assert(hasEdge(p, ARTV1, ENVH, "inEnv"), "artifact->env via env_snapshot_hash");
-      assert(hasEdge(p, ARTV2, ENVH, "inEnv"), "artifact->env via env_snapshot_hash");
-      assert(hasEdge(p, EXEC, "python", "ranInEnv"), "execution->env via conda_env (name; drift-exposing)");
+      assert(
+        hasEdge(p, ARTV1, ENVH, "inEnv"),
+        "artifact->env via env_snapshot_hash",
+      );
+      assert(
+        hasEdge(p, ARTV2, ENVH, "inEnv"),
+        "artifact->env via env_snapshot_hash",
+      );
+      assert(
+        hasEdge(p, EXEC, "python", "ranInEnv"),
+        "execution->env via conda_env (name; drift-exposing)",
+      );
       // dependsOn from BOTH parent_version_id and dependency_mappings.inputs[].artifact_id
-      assert(hasEdge(p, ARTV2, ARTV1, "dependsOn"), "dependsOn via parent_version_id");
-      assert(hasEdge(p, ARTV2, DEP0, "dependsOn"), "dependsOn via dependency_mappings.artifact_id");
+      assert(
+        hasEdge(p, ARTV2, ARTV1, "dependsOn"),
+        "dependsOn via parent_version_id",
+      );
+      assert(
+        hasEdge(p, ARTV2, DEP0, "dependsOn"),
+        "dependsOn via dependency_mappings.artifact_id",
+      );
 
       // env packages captured
       const env = p.nodes.envs[0];
@@ -162,15 +208,27 @@ Deno.test({
 });
 
 Deno.test({
-  name: "provenance: wrote/read edges resolve CS file DESCRIPTORS {path,sha256} to the path (never [object Object])",
+  name:
+    "provenance: wrote/read edges resolve CS file DESCRIPTORS {path,sha256} to the path (never [object Object])",
   ignore: !HAVE,
   fn: async () => {
     const org = await fixture({ objectFiles: true });
     try {
       const { sink } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
-      assert(hasEdge(p, EXEC, WROTE_PATH, "wrote"), "wrote edge targets the descriptor path");
-      assert(hasEdge(p, EXEC, READ_PATH, "read"), "read edge targets the descriptor path");
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
+      assert(
+        hasEdge(p, EXEC, WROTE_PATH, "wrote"),
+        "wrote edge targets the descriptor path",
+      );
+      assert(
+        hasEdge(p, EXEC, READ_PATH, "read"),
+        "read edge targets the descriptor path",
+      );
       assert(
         !p.edges.some((e) => e.to.includes("[object Object]")),
         "no edge target was stringified from an object",
@@ -182,25 +240,42 @@ Deno.test({
 });
 
 Deno.test({
-  name: "provenance: large source + env packages offloaded to content-addressed files (verbatim)",
+  name:
+    "provenance: large source + env packages offloaded to content-addressed files (verbatim)",
   ignore: !HAVE,
   fn: async () => {
     const org = await fixture();
     try {
       const { sink, files } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       // execution source offloaded
       const exec = p.nodes.executions[0];
       assert(exec.sourceFileRef, "large source offloaded");
       assert(!exec.source, "offloaded source not inline");
-      assert(p.writeManifest.includes(exec.sourceFileRef!), "manifest lists the source sha");
-      assertEquals(new TextDecoder().decode(files[`body/${exec.sourceFileRef}`]), BIG);
+      assert(
+        p.writeManifest.includes(exec.sourceFileRef!),
+        "manifest lists the source sha",
+      );
+      assertEquals(
+        new TextDecoder().decode(files[`body/${exec.sourceFileRef}`]),
+        BIG,
+      );
       // env packages offloaded (large list)
       const env = p.nodes.envs[0];
       assert(env.packagesFileRef, "large env packages offloaded");
-      assert(p.writeManifest.includes(env.packagesFileRef!), "manifest lists the env sha");
       assert(
-        new TextDecoder().decode(files[`body/${env.packagesFileRef}`]).includes("biopython0"),
+        p.writeManifest.includes(env.packagesFileRef!),
+        "manifest lists the env sha",
+      );
+      assert(
+        new TextDecoder().decode(files[`body/${env.packagesFileRef}`]).includes(
+          "biopython0",
+        ),
         "offloaded env body holds verbatim packages",
       );
     } finally {
@@ -219,7 +294,10 @@ Deno.test({
       const r1 = await captureProvenance(org, "gdh", undefined, a.sink);
       const b = fakeSink();
       const r2 = await captureProvenance(org, "gdh", undefined, b.sink);
-      assertEquals(JSON.stringify(r1.provenance), JSON.stringify(r2.provenance));
+      assertEquals(
+        JSON.stringify(r1.provenance),
+        JSON.stringify(r2.provenance),
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -244,19 +322,33 @@ Deno.test({
 });
 
 Deno.test({
-  name: "provenance: injection gates skip a bad producing_cell_id / env hash (warn, not inject)",
+  name:
+    "provenance: injection gates skip a bad producing_cell_id / env hash (warn, not inject)",
   ignore: !HAVE,
   fn: async () => {
     const org = await fixture({ badIds: true });
     try {
       const { sink } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       // no execution node (producing_cell_id failed FRAME_ID_RE), no env node (hash failed HASH_RE)
       assertEquals(p.nodes.executions.length, 0);
       assertEquals(p.nodes.envs.length, 0);
-      assert(!p.edges.some((e) => e.kind === "producedBy"), "no producedBy for a bad id");
-      assert(!p.edges.some((e) => e.kind === "inEnv"), "no inEnv for a bad hash");
-      assert(p.warnings.some((w) => /producing_cell_id|frame id|FRAME_ID/i.test(w)));
+      assert(
+        !p.edges.some((e) => e.kind === "producedBy"),
+        "no producedBy for a bad id",
+      );
+      assert(
+        !p.edges.some((e) => e.kind === "inEnv"),
+        "no inEnv for a bad hash",
+      );
+      assert(
+        p.warnings.some((w) => /producing_cell_id|frame id|FRAME_ID/i.test(w)),
+      );
       assert(p.warnings.some((w) => /hash|HASH/i.test(w)));
     } finally {
       await Deno.remove(org, { recursive: true });
@@ -265,16 +357,30 @@ Deno.test({
 });
 
 Deno.test({
-  name: "provenance: drift — missing rows + malformed dependency_mappings degrade+warn (no throw)",
+  name:
+    "provenance: drift — missing rows + malformed dependency_mappings degrade+warn (no throw)",
   ignore: !HAVE,
   fn: async () => {
     // missing execution_log + content_snapshots rows
     let org = await fixture({ missingRows: true });
     try {
       const { sink } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
-      assertEquals(p.nodes.executions.length, 0, "absent execution_log row -> no node");
-      assertEquals(p.nodes.envs.length, 0, "absent content_snapshots row -> no node");
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
+      assertEquals(
+        p.nodes.executions.length,
+        0,
+        "absent execution_log row -> no node",
+      );
+      assertEquals(
+        p.nodes.envs.length,
+        0,
+        "absent content_snapshots row -> no node",
+      );
       assert(p.warnings.length > 0, "drift warns");
     } finally {
       await Deno.remove(org, { recursive: true });
@@ -283,9 +389,17 @@ Deno.test({
     org = await fixture({ malformedDeps: true });
     try {
       const { sink } = fakeSink();
-      const { provenance: p } = await captureProvenance(org, "gdh", undefined, sink);
+      const { provenance: p } = await captureProvenance(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       // parent_version_id dependsOn still emitted; the malformed inputs degrade
-      assert(hasEdge(p, ARTV2, ARTV1, "dependsOn"), "parent backbone survives malformed deps");
+      assert(
+        hasEdge(p, ARTV2, ARTV1, "dependsOn"),
+        "parent backbone survives malformed deps",
+      );
       assert(p.warnings.some((w) => /dependency_mappings/i.test(w)));
     } finally {
       await Deno.remove(org, { recursive: true });
@@ -303,7 +417,10 @@ Deno.test({
       await captureProvenance(org, "gdh", undefined, sink);
       const blob = JSON.stringify(resources) +
         Object.values(files).map((f) => new TextDecoder().decode(f)).join("");
-      assert(!blob.includes("SUPERSECRETCIPHERTEXT_MUST_NOT_APPEAR"), "credential ciphertext leaked");
+      assert(
+        !blob.includes("SUPERSECRETCIPHERTEXT_MUST_NOT_APPEAR"),
+        "credential ciphertext leaked",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }

@@ -160,6 +160,12 @@ export const QUERIES = {
   // same storage_path LIKE '<pid>/%' pattern as artifact_provenance). Deterministic; single column.
   project_env_hashes: (pid: string) =>
     `SELECT DISTINCT env_snapshot_hash FROM artifact_versions WHERE storage_path LIKE '${pid}/%' AND env_snapshot_hash IS NOT NULL ORDER BY env_snapshot_hash`,
+  // review: the independent reviewer's verification_checks for this project, scoped by
+  // root_frame_id ∈ the project's frames. claim + evidence are analysis prose (SENSITIVE),
+  // never a credential. reviewer_model/kind + verdict/severity/status carry the audit. pid gated.
+  review_checks: (pid: string) =>
+    `SELECT id,verdict,severity,claim,evidence,reviewer_model,reviewer_kind,status,created_at ` +
+    `FROM verification_checks WHERE root_frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY created_at,id`,
 } as const;
 
 /* ============================ env snapshot parse (shared) ============================ */

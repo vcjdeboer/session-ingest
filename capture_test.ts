@@ -75,7 +75,8 @@ async function fixture(): Promise<string> {
 
 async function md5(p: string): Promise<string> {
   const h = await crypto.subtle.digest("SHA-256", await Deno.readFile(p));
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 Deno.test({
@@ -91,9 +92,16 @@ Deno.test({
       assertEquals(t.nTurns, 10);
       // every frame's messages captured (coverage: UPLOADS + orphan included)
       const frameIds = new Set(t.turns.map((x) => x.frameId));
-      for (const f of [ROOT, REV, UPL, ORPHAN]) assert(frameIds.has(f), `missing frame ${f}`);
+      for (const f of [ROOT, REV, UPL, ORPHAN]) {
+        assert(frameIds.has(f), `missing frame ${f}`);
+      }
       // typing reconciles
-      assertEquals(t.byType, { userTyped: 1, assistant: 6, toolResults: 2, harnessInjected: 1 });
+      assertEquals(t.byType, {
+        userTyped: 1,
+        assistant: 6,
+        toolResults: 2,
+        harnessInjected: 1,
+      });
       // canonical order: seq monotonic; frames by created_at (UPL0, ROOT1, REV2, ORPHAN3)
       assertEquals(t.turns.map((x) => x.seq), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
       assertEquals(t.turns[0].frameId, UPL);
@@ -101,7 +109,10 @@ Deno.test({
       // duplicate idx within ROOT resolved by rowid (two idx=1 turns, both present, in insert order)
       const rootIdx1 = t.turns.filter((x) => x.frameId === ROOT && x.idx === 1);
       assertEquals(rootIdx1.length, 2);
-      assert(rootIdx1[0].rowid < rootIdx1[1].rowid, "duplicate idx ordered by rowid");
+      assert(
+        rootIdx1[0].rowid < rootIdx1[1].rowid,
+        "duplicate idx ordered by rowid",
+      );
       // orphan flagged, not dropped
       assertEquals(t.turns.find((x) => x.frameId === ORPHAN)?.orphan, true);
       assertEquals(t.turns.find((x) => x.frameId === REV)?.depth, 1);
@@ -118,12 +129,22 @@ Deno.test({
     const org = await fixture();
     try {
       const { sink } = fakeSink();
-      const { transcript: t } = await captureMessages(org, "gdh", undefined, sink);
+      const { transcript: t } = await captureMessages(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       // the secret-shaped turn is stored UNCHANGED (verbatim)
-      const secretTurn = t.turns.find((x) => x.blocks.some((b) => b.text?.includes("sk-ABCDEFGHIJKLMNOPQRSTUVWX")));
+      const secretTurn = t.turns.find((x) =>
+        x.blocks.some((b) => b.text?.includes("sk-ABCDEFGHIJKLMNOPQRSTUVWX"))
+      );
       assert(secretTurn, "secret text captured verbatim, unredacted");
       // and the tripwire WARNED without mutating
-      assert(t.warnings.some((w) => /secret-shaped/.test(w)), "tripwire should warn");
+      assert(
+        t.warnings.some((w) => /secret-shaped/.test(w)),
+        "tripwire should warn",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -131,25 +152,46 @@ Deno.test({
 });
 
 Deno.test({
-  name: "capture: large body offloaded to a content-addressed file; index references it",
+  name:
+    "capture: large body offloaded to a content-addressed file; index references it",
   ignore: !HAVE,
   fn: async () => {
     const org = await fixture();
     try {
       const { sink, files } = fakeSink();
-      const { transcript: t } = await captureMessages(org, "gdh", undefined, sink);
+      const { transcript: t } = await captureMessages(
+        org,
+        "gdh",
+        undefined,
+        sink,
+      );
       const bigTurn = t.turns.find((x) => x.blocks.some((b) => b.bodyFileRef));
       assert(bigTurn, "a large body should be offloaded");
       const ref = bigTurn.blocks.find((b) => b.bodyFileRef)!.bodyFileRef!;
-      assert(bigTurn.blocks.every((b) => !b.text || b.text.length <= 2000), "offloaded body not inline");
+      assert(
+        bigTurn.blocks.every((b) => !b.text || b.text.length <= 2000),
+        "offloaded body not inline",
+      );
       assert(t.writeManifest.includes(ref), "writeManifest lists the sha");
       const file = files[`body/${ref}`];
       assert(file, "body file was written (files-first)");
-      assertEquals(new TextDecoder().decode(file), BIG, "offloaded file holds the verbatim body");
+      assertEquals(
+        new TextDecoder().decode(file),
+        BIG,
+        "offloaded file holds the verbatim body",
+      );
       // large tool_use.input offloaded (ca-3); small one stays inline
-      const toolUses = t.turns.flatMap((x) => x.blocks).filter((b) => b.type === "tool_use");
-      assert(toolUses.some((b) => b.bodyFileRef && b.input === undefined), "large tool_use.input offloaded");
-      assert(toolUses.some((b) => b.input !== undefined && !b.bodyFileRef), "small tool_use.input inline");
+      const toolUses = t.turns.flatMap((x) => x.blocks).filter((b) =>
+        b.type === "tool_use"
+      );
+      assert(
+        toolUses.some((b) => b.bodyFileRef && b.input === undefined),
+        "large tool_use.input offloaded",
+      );
+      assert(
+        toolUses.some((b) => b.input !== undefined && !b.bodyFileRef),
+        "small tool_use.input inline",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -157,7 +199,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "capture: idempotent re-run (same shas, no orphan) + source non-mutation",
+  name:
+    "capture: idempotent re-run (same shas, no orphan) + source non-mutation",
   ignore: !HAVE,
   fn: async () => {
     const org = await fixture();
@@ -168,9 +211,16 @@ Deno.test({
       const r1 = await captureMessages(org, "gdh", undefined, a.sink);
       const b = fakeSink();
       const r2 = await captureMessages(org, "gdh", undefined, b.sink);
-      assertEquals(r1.transcript.writeManifest.sort(), r2.transcript.writeManifest.sort());
+      assertEquals(
+        r1.transcript.writeManifest.sort(),
+        r2.transcript.writeManifest.sort(),
+      );
       assertEquals(Object.keys(a.files).sort(), Object.keys(b.files).sort());
-      assertEquals(await md5(db), before, "source DB must be untouched by capture");
+      assertEquals(
+        await md5(db),
+        before,
+        "source DB must be untouched by capture",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -187,7 +237,10 @@ Deno.test({
       await captureMessages(org, "gdh", undefined, sink);
       const blob = JSON.stringify(resources) +
         Object.values(files).map((f) => new TextDecoder().decode(f)).join("");
-      assert(!blob.includes("SUPERSECRETCIPHERTEXT_MUST_NOT_APPEAR"), "credential ciphertext leaked");
+      assert(
+        !blob.includes("SUPERSECRETCIPHERTEXT_MUST_NOT_APPEAR"),
+        "credential ciphertext leaked",
+      );
     } finally {
       await Deno.remove(org, { recursive: true });
     }

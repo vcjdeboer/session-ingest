@@ -79,6 +79,20 @@ Deno.test("capture-report: mines tools, skills, reviewer tally, prompts from sea
           blocks: [{ type: "text", text: "how does gdh evolve" }],
         }],
       },
+      7: {
+        total: 2,
+        byVerdict: { fail: 1, warn: 1 },
+        checks: [
+          {
+            verdict: "fail",
+            severity: "low",
+            claim: "L128V value mismatch",
+            evidence: "0.00003 vs computed 0.0000167",
+            reviewerModel: "claude-sonnet-5",
+          },
+          { verdict: "warn", claim: "unverified assumption", evidence: "" },
+        ],
+      },
     },
   };
   const specs = [
@@ -88,6 +102,7 @@ Deno.test("capture-report: mines tools, skills, reviewer tally, prompts from sea
     { name: rn, version: 4, specName: "skills" },
     { name: rn, version: 5, specName: "lockenv" },
     { name: rn, version: 6, specName: "transcript" },
+    { name: rn, version: 7, specName: "review" },
   ];
   const res = await report.execute({
     modelType: "@vcjdeboer/session-ingest",
@@ -102,12 +117,16 @@ Deno.test("capture-report: mines tools, skills, reviewer tally, prompts from sea
   assert(res.markdown.includes("RERconverge"), "R package");
   assert(res.markdown.includes("figure-style"), "CS skill");
   assert(res.markdown.includes("numpy"), "python package");
-  // reviewer tally from the sealed manifest
+  // reviewer detail from the sealed review facet (claim + evidence, not just tally)
   assert(res.markdown.includes("1 fail"));
+  assert(res.markdown.includes("L128V value mismatch"), "sealed claim");
+  assert(res.markdown.includes("0.0000167"), "sealed evidence");
   // prompt captured
   assert(res.markdown.includes("how does gdh evolve"));
   // structured json mirrors it
   const j = res.json as Record<string, unknown>;
-  assertEquals((j.reviewer as { total: number }).total, 3);
+  // prefers the sealed review facet (total 2) over the manifest tally (3)
+  assertEquals((j.reviewer as { total: number }).total, 2);
+  assertEquals((j.reviewer as { detailSealed: boolean }).detailSealed, true);
   assertEquals((j.prompts as string[]).length, 1);
 });

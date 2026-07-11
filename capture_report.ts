@@ -161,8 +161,9 @@ async function readJson(
 }
 
 export const report = {
+  name: "@vcjdeboer/capture-report",
   description:
-    "Render a captured CS session (session-ingest facets) into a readable report: sealed facets, the reviewer's verdict tally, your verbatim prompts, and a few captured figures embedded inline. Reads only sealed swamp data.",
+    "Render a captured CS session (session-ingest facets) into a readable report: sealed facets, the tools/packages/skills the session loaded, the independent reviewer's detail, your verbatim prompts, and a few captured figures embedded inline. Reads only sealed swamp data.",
   scope: "method" as const,
   labels: ["capture", "session-ingest", "provenance"],
 
@@ -245,6 +246,7 @@ export const report = {
     const cellsFacet = await readFacet("cells");
     const skillsFacet = await readFacet("skills");
     const lockFacet = await readFacet("lockenv");
+    const reviewFacet = await readFacet("review");
 
     // ---- tools, packages & skills (mined from the sealed cells/skills/lockenv) ----
     const rawCells = (cellsFacet?.cells as Array<Record<string, unknown>>) ??
@@ -389,16 +391,41 @@ export const report = {
       );
     }
 
+    // Prefer the sealed `review` facet (full detail); fall back to the manifest tally.
+    const reviewChecks =
+      (reviewFacet?.checks as Array<Record<string, unknown>>) ?? [];
+    const reviewTally = (reviewFacet?.byVerdict as Record<string, number>) ??
+      byVerdict;
+    const reviewTotal = (reviewFacet?.total as number) ?? vc.total ?? 0;
     md.push(`## The independent reviewer\n`);
     md.push(
-      `**${vc.total ?? 0}** checks by an out-of-band model — ` +
-        `❌ ${byVerdict.fail ?? 0} fail · ⚠️ ${byVerdict.warn ?? 0} warn · ✅ ${
-          byVerdict.pass ?? 0
-        } pass\n`,
+      `**${reviewTotal}** checks by an out-of-band model — ` +
+        `❌ ${reviewTally.fail ?? 0} fail · ⚠️ ${
+          reviewTally.warn ?? 0
+        } warn · ✅ ${reviewTally.pass ?? 0} pass\n`,
     );
-    md.push(
-      `> Per-check claims + evidence are not in this bundle yet (only the tally is sealed); a \`capture_review\` facet would seal the detail.\n`,
-    );
+    if (reviewChecks.length) {
+      const flagged = reviewChecks.filter((c) =>
+        c.verdict === "fail" || c.verdict === "warn"
+      );
+      for (const c of flagged) {
+        const icon = c.verdict === "fail" ? "❌" : "⚠️";
+        md.push(
+          `\n**${icon} ${String(c.verdict).toUpperCase()}** · ${
+            String(c.severity ?? "")
+          } · \`${String(c.reviewerModel ?? "")}\``,
+        );
+        md.push(`> ${String(c.claim ?? "").replace(/\n+/g, " ")}`);
+        const ev = String(c.evidence ?? "").replace(/\n+/g, " ");
+        if (ev) {
+          md.push(`>\n> _${ev.slice(0, 600)}${ev.length > 600 ? "…" : ""}_`);
+        }
+      }
+    } else {
+      md.push(
+        `> Per-check claims + evidence aren't in this bundle — run \`capture_review\` to seal the reviewer detail.\n`,
+      );
+    }
 
     md.push(`## Your prompts (${prompts.length}, verbatim)\n`);
     for (const p of prompts) md.push(`- ${p.replace(/\n+/g, " ")}`);
@@ -421,7 +448,19 @@ export const report = {
           messages: msg.total ?? null,
           prompts: prompts.length,
         },
-        reviewer: { total: vc.total ?? 0, byVerdict },
+        reviewer: {
+          total: reviewTotal,
+          byVerdict: reviewTally,
+          detailSealed: reviewChecks.length > 0,
+          flagged: reviewChecks.filter((c) =>
+            c.verdict === "fail" || c.verdict === "warn"
+          ).map((c) => ({
+            verdict: c.verdict,
+            severity: c.severity,
+            claim: c.claim,
+            reviewerModel: c.reviewerModel,
+          })),
+        },
         tools: {
           cli: tools.cli,
           rPackages: tools.rPkgs,
