@@ -167,6 +167,48 @@ function harvestAssembliesJson(
   }
 }
 
+/* ============================ auto-derive roots ============================ */
+const TMP_BASES = ["/private/tmp/", "/tmp/"];
+/**
+ * Zero-config path for the standard capture flow: when the caller supplies NO
+ * roots, derive them from the session's OWN trace — the distinct top-level
+ * `/tmp` working dirs this project's cells actually read or wrote
+ * (`execution_log.files_read`/`files_written`). Only `/private/tmp`,`/tmp` bases
+ * are considered, and every derived root is still run through `validateRoot`
+ * downstream, so this never widens the security envelope — it only removes the
+ * manual allowlist burden that got `capture_inputs` skipped. Deleted dirs (swept
+ * from /tmp) simply fail validation → captured as empty, honestly.
+ */
+export function deriveTmpRoots(rows: Row[]): string[] {
+  const roots = new Set<string>();
+  const consider = (paths: unknown): void => {
+    if (typeof paths !== "string" || !paths) return;
+    let arr: unknown;
+    try {
+      arr = JSON.parse(paths);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(arr)) return;
+    for (const e of arr) {
+      const p = typeof e === "string" ? e : (e as Row)?.path;
+      if (typeof p !== "string") continue;
+      for (const base of TMP_BASES) {
+        if (p.startsWith(base)) {
+          const seg = p.slice(base.length).split("/")[0];
+          if (seg) roots.add(base + seg); // e.g. /private/tmp/quant
+          break;
+        }
+      }
+    }
+  };
+  for (const r of rows) {
+    consider(r.files_written);
+    consider(r.files_read);
+  }
+  return [...roots].sort();
+}
+
 /* ============================ the capture ============================ */
 export async function captureInputs(
   csRoot: string,
@@ -207,10 +249,29 @@ export async function captureInputs(
     if (!PROJ_ID_RE.test(pid)) throw new Error(`unexpected project id: ${pid}`);
     const projName = (proj.name ?? null) as string | null;
 
+    // ---- zero-config: derive /tmp roots from the session's own trace ----
+    // When no roots are supplied, freeze the /tmp working dirs this project
+    // actually touched (per execution_log). Makes capture_inputs safe to run
+    // unconditionally in the standard capture flow — no manual allowlist.
+    let rootsIn = opts.roots;
+    if (rootsIn.length === 0) {
+      const files = (await readClone(
+        clone,
+        QUERIES.execution_files(pid),
+      )) as Row[];
+      rootsIn = deriveTmpRoots(files);
+      sink.logger.info("capture_inputs auto-derived roots from trace", {
+        derived: rootsIn.length,
+      });
+      if (rootsIn.length === 0) {
+        warn("no /tmp roots found in trace — nothing to freeze");
+      }
+    }
+
     // ---- validate every root (allowlist) ----
     const accepted: { root: string; resolved: string; prefixes: string[] }[] =
       [];
-    for (const root of opts.roots) {
+    for (const root of rootsIn) {
       const v = await validateRoot(root, {
         allowedBases: opts.allowedBases,
         allowSensitiveRoot: opts.allowSensitiveRoot,

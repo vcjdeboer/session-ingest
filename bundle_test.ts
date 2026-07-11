@@ -40,6 +40,22 @@ Deno.test("orderItems drops resources not in the canonical set", () => {
   assertEquals(orderItems(present).map((i) => i.name), ["corpus"]);
 });
 
+Deno.test("orderItems seals the replay-critical cells/skills/host_calls resources", () => {
+  // Regression: these three (added in .11.x) were silently DROPPED from the seal,
+  // so the witness digest never covered the cell script / injected skills / host
+  // calls that make a session replayable. They must be retained, in canonical order.
+  const present: BundleItem[] = [
+    { name: "host_calls", checksum: "h", ref: "rh" },
+    { name: "cells", checksum: "c", ref: "rc" },
+    { name: "corpus", checksum: "co", ref: "rco" },
+    { name: "skills", checksum: "s", ref: "rs" },
+  ];
+  assertEquals(
+    orderItems(present).map((i) => i.name),
+    ["corpus", "cells", "skills", "host_calls"],
+  );
+});
+
 Deno.test("resolveStamp maps a reproduced nix verdict to replayable-nix", () => {
   assertEquals(
     resolveStamp({ reproduced: true, envUsed: "nix" }),

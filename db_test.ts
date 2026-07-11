@@ -25,8 +25,14 @@ async function sqlite(db: string, sql: string): Promise<void> {
   if (!out.success) throw new Error(new TextDecoder().decode(out.stderr));
 }
 
-/** A fixture org dir with operon-cli.db. opts.drift drops artifact_versions. */
-async function fixture(opts: { drift?: boolean; empty?: boolean } = {}): Promise<string> {
+/**
+ * A fixture org dir with operon-cli.db. opts.drift drops artifact_versions.
+ * opts.multiSession adds a SECOND parentless OPERON session (its own headline +
+ * reviewer child + one verification check) so multi-session behaviour is testable.
+ */
+async function fixture(
+  opts: { drift?: boolean; empty?: boolean; multiSession?: boolean } = {},
+): Promise<string> {
   const orgDir = await Deno.makeTempDir({ prefix: "ing-fixture-" });
   await Deno.mkdir(`${orgDir}/orgs/org1`, { recursive: true });
   await Deno.mkdir(`${orgDir}/orgs/org1/artifacts/proj_abc123/a`, { recursive: true });
@@ -41,8 +47,8 @@ async function fixture(opts: { drift?: boolean; empty?: boolean } = {}): Promise
     INSERT INTO projects VALUES ('proj_abc123','gdh','multi
 line
 desc',1,2,'f1');
-    CREATE TABLE frames (id TEXT,parent_frame_id TEXT,agent_name TEXT,delegate_name TEXT,conversation_type TEXT,model TEXT,effort TEXT,status TEXT,compute_enabled TEXT,project_id TEXT);
-    INSERT INTO frames VALUES ('${ROOT}',NULL,'OPERON',NULL,'agent','opus','high','completed',NULL,'proj_abc123');
+    CREATE TABLE frames (id TEXT,parent_frame_id TEXT,root_frame_id TEXT,agent_name TEXT,delegate_name TEXT,conversation_type TEXT,model TEXT,effort TEXT,status TEXT,compute_enabled TEXT,project_id TEXT,name TEXT,created_at INT);
+    INSERT INTO frames VALUES ('${ROOT}',NULL,'${ROOT}','OPERON',NULL,'agent','opus','high','completed',NULL,'proj_abc123','Analyze gdh',100);
     CREATE TABLE user_secrets (id TEXT,provider TEXT,encrypted_value TEXT);
     INSERT INTO user_secrets VALUES ('s1','openalex','SUPERSECRETCIPHERTEXT');
     CREATE TABLE verification_checks (id TEXT,root_frame_id TEXT,verdict TEXT);
@@ -56,11 +62,22 @@ desc',1,2,'f1');
   `;
   if (!opts.empty) {
     sql += `
-      INSERT INTO frames VALUES ('${REV}','${ROOT}','REVIEWER','reviewer','agent','sonnet',NULL,'completed',1,'proj_abc123');
+      INSERT INTO frames VALUES ('${REV}','${ROOT}','${ROOT}','REVIEWER','reviewer','agent','sonnet',NULL,'completed',1,'proj_abc123',NULL,101);
       INSERT INTO verification_checks VALUES ('c1','${ROOT}','pass'),('c2','${ROOT}','pass'),('c3','${ROOT}','warn');
       INSERT INTO frame_messages VALUES
         ('${REV}',0,'{"role":"user","_harness_prompt":"rev","content":"You are reviewing"}'),
         ('${REV}',1,'{"role":"assistant","content":"findings"}');
+    `;
+  }
+  if (opts.multiSession) {
+    // a SECOND parentless OPERON session: own headline, own reviewer child, 1 check.
+    // ROOT2 carries root_frame_id='' (empty string, allowed by FrameRow) — regression
+    // guard: sessionIdOf must fall back to the frame's own id (|| not ??) so the root
+    // counts ITSELF in its session's nFrames. With ?? this session would report 1 frame.
+    sql += `
+      INSERT INTO frames VALUES ('${ROOT2}',NULL,'','OPERON',NULL,'agent','opus','high','completed',NULL,'proj_abc123','Diving physiology lit review',200);
+      INSERT INTO frames VALUES ('${REV2}','${ROOT2}','${ROOT2}','REVIEWER','reviewer','agent','sonnet',NULL,'completed',NULL,'proj_abc123',NULL,201);
+      INSERT INTO verification_checks VALUES ('c4','${ROOT2}','pass');
     `;
   }
   if (!opts.drift && !opts.empty) {
@@ -81,6 +98,9 @@ desc',1,2,'f1');
 /** Fixed UUIDs so verification_checks.root_frame_id passes FRAME_ID_RE. */
 const ROOT = "6b2bd51d-1111-4111-8111-111111111111";
 const REV = "aaaaaaaa-2222-4222-8222-222222222222";
+/** A second session's root + reviewer (opts.multiSession). */
+const ROOT2 = "cccccccc-3333-4333-8333-333333333333";
+const REV2 = "dddddddd-4444-4444-8444-444444444444";
 
 async function md5(path: string): Promise<string> {
   const buf = await Deno.readFile(path);
@@ -256,6 +276,17 @@ Deno.test({
       assertEquals(m.framesByRole, { OPERON: 1, REVIEWER: 1 }); // generic role breakdown
       assertEquals(m.verificationChecks.total, 3);
       assertEquals(m.verificationChecks.byVerdict, { pass: 2, warn: 1 });
+      // single-session project: exactly one session, headline + per-session breakdown captured
+      assertEquals(m.sessions.length, 1);
+      assertEquals(m.sessions[0].rootFrameId, ROOT);
+      assertEquals(m.sessions[0].headline, "Analyze gdh");
+      assertEquals(m.sessions[0].createdAt, 100);
+      assertEquals(m.sessions[0].nFrames, 2);
+      assertEquals(m.sessions[0].framesByRole, { OPERON: 1, REVIEWER: 1 });
+      assertEquals(m.sessions[0].verificationChecks, {
+        total: 3,
+        byVerdict: { pass: 2, warn: 1 },
+      });
       // 7 turns, every one NAMED, zero catch-all remainder
       assertEquals(m.messages, {
         total: 7,
@@ -272,6 +303,37 @@ Deno.test({
         ["proj_abc123/a/v2.png", "proj_abc123/a/v3.R", "proj_abc123/a/v4.tmp"].sort(),
       );
       assertEquals(m.credentialsScope, "deferred-to-capture");
+    } finally {
+      await Deno.remove(org, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "buildManifest: multi-session project splits headlines + reviewer checks per session",
+  ignore: !HAVE_SQLITE,
+  fn: async () => {
+    const org = await fixture({ multiSession: true });
+    try {
+      const m = await buildManifest(org, "gdh");
+      // two separate sessions, ordered by created_at (100 then 200)
+      assertEquals(m.sessions.length, 2);
+      assertEquals(m.sessions.map((s) => s.headline), [
+        "Analyze gdh",
+        "Diving physiology lit review",
+      ]);
+      assertEquals(m.sessions.map((s) => s.rootFrameId), [ROOT, ROOT2]);
+      // per-session reviewer checks are NOT blurred together
+      assertEquals(m.sessions[0].verificationChecks.total, 3);
+      assertEquals(m.sessions[1].verificationChecks.total, 1);
+      // per-session frame attribution (root + its reviewer child)
+      assertEquals(m.sessions[0].nFrames, 2);
+      assertEquals(m.sessions[1].nFrames, 2);
+      assertEquals(m.sessions[1].framesByRole, { OPERON: 1, REVIEWER: 1 });
+      // project-level roll-up sums BOTH sessions (never drops the 2nd session's check)
+      assertEquals(m.verificationChecks.total, 4);
+      assertEquals(m.verificationChecks.byVerdict, { pass: 3, warn: 1 });
+      assertEquals(m.nFrames, 4);
     } finally {
       await Deno.remove(org, { recursive: true });
     }
@@ -334,7 +396,7 @@ async function crashLeavesPendingWal(db: string): Promise<void> {
   const w = p.stdin.getWriter();
   await w.write(new TextEncoder().encode(
     "PRAGMA journal_mode=WAL;\n" +
-      "INSERT INTO frames VALUES('crash',NULL,'OPERON',NULL,'agent','opus','high','completed',NULL,'proj_abc123');\n",
+      "INSERT INTO frames VALUES('crash',NULL,'crash','OPERON',NULL,'agent','opus','high','completed',NULL,'proj_abc123',NULL,300);\n",
   ));
   await new Promise((r) => setTimeout(r, 400)); // let the commit reach -wal
   p.kill("SIGKILL"); // crash before the close-checkpoint runs

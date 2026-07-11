@@ -87,6 +87,21 @@ const ManifestSchema = z.object({
     total: z.number(),
     byVerdict: z.record(z.string(), z.number()),
   }),
+  // A project can hold several top-level sessions; each keeps its own headline +
+  // reviewer checks so a multi-session project is not blurred into one.
+  sessions: z.array(z.object({
+    rootFrameId: z.string(),
+    headline: z.string().nullable(),
+    createdAt: z.number().nullable(),
+    conversationType: z.string().nullable(),
+    agentName: z.string().nullable(),
+    nFrames: z.number(),
+    framesByRole: z.record(z.string(), z.number()),
+    verificationChecks: z.object({
+      total: z.number(),
+      byVerdict: z.record(z.string(), z.number()),
+    }),
+  })),
   messages: z.object({
     total: z.number(),
     userTyped: z.number(),
@@ -120,8 +135,10 @@ function resolveCsRoot(
 const InputsArgsSchema = z.object({
   /** Project the /tmp inputs belong to: a name or a proj_id (keys the record). */
   project: z.string().min(1),
-  /** JSON-array string of external roots to freeze, e.g. '["/private/tmp/cds","/private/tmp/sel"]'. */
-  roots: z.string().min(1),
+  /** JSON-array string of external roots to freeze, e.g. '["/private/tmp/cds","/private/tmp/sel"]'.
+   * OPTIONAL: omit (or "") to AUTO-DERIVE the /tmp roots from the session's own
+   * files_read/files_written trace — the zero-config standard-flow path. */
+  roots: z.string().default(""),
   /** JSON-array string of roots recorded by-reference (path+size) instead of copied (e.g. the 10GB quant). */
   referenceRoots: z.string().default(""),
   /** Per-file byte threshold above which a file is recorded by-reference. */
@@ -140,12 +157,36 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.6",
+  version: "2026.07.11.9",
   globalArguments: GlobalArgsSchema,
+  // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
+  // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
+  // to cover cells/skills/host_calls; .11.9 makes capture_inputs.roots OPTIONAL — it
+  // auto-derives /tmp roots from the session trace). No-op upgrades still advance typeVersion.
+  upgrades: [
+    {
+      toVersion: "2026.07.11.7",
+      description:
+        "Multi-session manifest: additive sessions[] output field; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.8",
+      description:
+        "Seal covers cells/skills/host_calls; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.9",
+      description:
+        "capture_inputs.roots optional — auto-derives /tmp roots from the session trace; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     "manifest": {
       description:
-        "Read-only summary of a Claude Science session's provenance state (counts, frames, reviewer passes, missing artifact files, remote-compute flag). Instance key = proj_id. Versioned; sha256 pinning belongs to capture.",
+        "Read-only summary of a Claude Science project's provenance state (counts, frames, reviewer passes, missing artifact files, remote-compute flag) plus a per-session breakdown (each top-level session's headline + own frames + own reviewer checks). Instance key = proj_id. Versioned; sha256 pinning belongs to capture.",
       schema: ManifestSchema,
       lifetime: "infinite",
       garbageCollection: 100,
@@ -315,6 +356,7 @@ export const model = {
           }`,
           {
             project: manifest.origin.project.id,
+            sessions: manifest.sessions.length,
             savedArtifacts: manifest.artifacts.saved,
             intermediate: manifest.artifacts.intermediate,
             versions: manifest.artifacts.versions,
@@ -562,7 +604,7 @@ export const model = {
     },
     capture_inputs: {
       description:
-        "Freeze a session's Tier-1 /private/tmp INPUTS (raw working data OUTSIDE the org tree, days-from-deletion) from a user-supplied ALLOWLIST of external roots into `blob` files + a SENSITIVE `inputs` record. Roots must resolve under /private/tmp,/tmp (else allowSensitiveRoot + sensitiveRootOptIn); copy-roots + accession files honor maxFileBytes (over-cap -> by-reference), a referenceRoot records path+size only. Harvests SRA/RefSeq accessions for re-fetchability. Path-safe (canonical containment), read-only over the tree; source never mutated.",
+        "Freeze a session's Tier-1 /private/tmp INPUTS (raw working data OUTSIDE the org tree, days-from-deletion) into `blob` files + a SENSITIVE `inputs` record. Roots come from an ALLOWLIST or, when `roots` is omitted, are AUTO-DERIVED from the session's own files_read/files_written trace (the zero-config standard-flow path) — derived roots are still validated. Roots must resolve under /private/tmp,/tmp (else allowSensitiveRoot + sensitiveRootOptIn); copy-roots + accession files honor maxFileBytes (over-cap -> by-reference), a referenceRoot records path+size only. Harvests SRA/RefSeq accessions for re-fetchability. Path-safe (canonical containment), read-only over the tree; source never mutated.",
       arguments: InputsArgsSchema,
       execute: async (
         args: z.infer<typeof InputsArgsSchema>,
@@ -600,7 +642,7 @@ export const model = {
             logger: context.logger,
           },
           {
-            roots: parseJsonStringArray("roots", args.roots),
+            roots: args.roots ? parseJsonStringArray("roots", args.roots) : [],
             referenceRoots: args.referenceRoots
               ? parseJsonStringArray("referenceRoots", args.referenceRoots)
               : undefined,

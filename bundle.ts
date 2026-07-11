@@ -28,6 +28,12 @@ export const CANONICAL_ORDER = [
   "inputs",
   "external",
   "credentials",
+  // Appended (.11.8) so the pre-existing digest order above is preserved: the
+  // replay-critical resources produced by capture_cells/capture_skills/
+  // capture_host_calls. Before this they were silently dropped from the seal.
+  "cells",
+  "skills",
+  "host_calls",
 ] as const;
 
 /** One sealable resource: its spec name, swamp content checksum, and content-ref. */

@@ -52,7 +52,7 @@ export const QUERIES = {
   projects_all: () =>
     "SELECT id,name,description,created_at,updated_at,uploads_frame_id FROM projects",
   frames_by_project: (pid: string) =>
-    `SELECT id,parent_frame_id,agent_name,delegate_name,conversation_type,model,effort,status,compute_enabled FROM frames WHERE project_id='${pid}'`,
+    `SELECT id,parent_frame_id,root_frame_id,agent_name,delegate_name,conversation_type,model,effort,status,compute_enabled,name,created_at FROM frames WHERE project_id='${pid}'`,
   artifact_counts: (pid: string) =>
     `SELECT language,count(*) n FROM artifact_versions WHERE storage_path LIKE '${pid}/%' GROUP BY language`,
   // saved (is_intermediate=0) vs intermediate (=1): versions + distinct artifacts
@@ -268,12 +268,16 @@ const ProjectRow = z.object({
 const FrameRow = z.object({
   id: z.string().optional(),
   parent_frame_id: z.string().nullable().optional(),
+  root_frame_id: z.string().nullable().optional(),
   agent_name: z.string().nullable().optional(),
   conversation_type: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   effort: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   compute_enabled: z.union([z.string(), z.number()]).nullable().optional(),
+  // the session HEADLINE (CS's per-session title) + when the frame was created
+  name: z.string().nullable().optional(),
+  created_at: z.number().nullable().optional(),
 }).passthrough();
 const CountRow = z.object({ n: z.number().optional() }).passthrough();
 const LangCountRow = z.object({
@@ -557,6 +561,24 @@ export interface Manifest {
   /** Reviewer/specialist verification checks (verdicts) — matches CS's reviewer "N checks". */
   verificationChecks: { total: number; byVerdict: Record<string, number> };
   /**
+   * The distinct SESSIONS this project holds. A CS project can contain several
+   * top-level agent conversations (each a parentless `agent` frame), each with its
+   * own HEADLINE (the frame `name`) and its own reviewer checks. The project-level
+   * counts above are the ROLL-UP across these; here each session is kept separate
+   * (its headline, when it started, its own frames + verification checks) so a
+   * multi-session project is not blurred into one. Ordered by createdAt then id.
+   */
+  sessions: {
+    rootFrameId: string;
+    headline: string | null;
+    createdAt: number | null;
+    conversationType: string | null;
+    agentName: string | null;
+    nFrames: number;
+    framesByRole: Record<string, number>;
+    verificationChecks: { total: number; byVerdict: Record<string, number> };
+  }[];
+  /**
    * Thread turns — COUNTED here, NOT captured. Complete NAMED typing, no catch-all:
    * `userTyped` (your prompts), `assistant`, `toolResults` (data/tool feedback),
    * `systemNotice`, `harnessInjected`; `unclassified` is a tripwire (should be 0).
@@ -671,12 +693,25 @@ export async function buildManifest(
     framesByRole[role] = (framesByRole[role] ?? 0) + 1;
   }
   const remoteComputeUsed = remoteCompute(frames);
-  // the session root frame (parent null, OPERON) — its id keys verification_checks
-  const rootFrame =
-    frames.find((f) =>
-      !f.parent_frame_id && (f.agent_name ?? "").toUpperCase() === "OPERON"
-    ) ??
-      frames.find((f) => !f.parent_frame_id);
+  // A project can hold SEVERAL top-level sessions. A session = a parentless frame
+  // that is an agent conversation (conversation_type='agent'); the UPLOADS root
+  // (conversation_type='uploads') is not a session. Descendant frames attribute to
+  // their session via root_frame_id (self on the root, the root's id on children).
+  const roots = frames.filter((f) => !f.parent_frame_id);
+  const sessionRoots = roots
+    .filter((f) =>
+      !!f.id &&
+      ((f.conversation_type ?? "").toLowerCase() === "agent" ||
+        (f.agent_name ?? "").toUpperCase() === "OPERON")
+    )
+    .sort((a, b) =>
+      (a.created_at ?? 0) - (b.created_at ?? 0) ||
+      (a.id ?? "").localeCompare(b.id ?? "")
+    );
+  // `||` (not `??`) so an empty-string root_frame_id falls back to the frame's own
+  // id — matches the falsy `!f.parent_frame_id` roots filter and avoids attributing a
+  // frame to a phantom "" session (which would drop it from every session's counts).
+  const sessionIdOf = (f: z.infer<typeof FrameRow>) => f.root_frame_id || f.id;
 
   // artifact counts by language
   const byLanguage: Record<string, number> = {};
@@ -747,20 +782,22 @@ export async function buildManifest(
     );
   }
 
-  // verification checks (verdicts) for this session's root frame — matches CS reviewer "N checks"
-  const verificationChecks = {
-    total: 0,
-    byVerdict: {} as Record<string, number>,
-  };
-  if (rootFrame?.id && FRAME_ID_RE.test(rootFrame.id)) {
+  // verification checks (verdicts) per root frame — matches CS reviewer "N checks".
+  // Fetched once per parentless root, then attached to each session AND summed for the
+  // project roll-up, so a multi-session project never drops the other sessions' checks.
+  const checksByRoot = new Map<
+    string,
+    { total: number; byVerdict: Record<string, number> }
+  >();
+  for (const r of roots) {
+    if (!r.id || !FRAME_ID_RE.test(r.id)) continue;
+    const acc = { total: 0, byVerdict: {} as Record<string, number> };
     try {
-      for (
-        const r of await query(dbPath, "checks_by_root", rootFrame.id, warn)
-      ) {
-        const v = String(r.verdict ?? "unknown");
-        const n = Number(r.n) || 0;
-        verificationChecks.byVerdict[v] = n;
-        verificationChecks.total += n;
+      for (const row of await query(dbPath, "checks_by_root", r.id, warn)) {
+        const v = String(row.verdict ?? "unknown");
+        const n = Number(row.n) || 0;
+        acc.byVerdict[v] = (acc.byVerdict[v] ?? 0) + n;
+        acc.total += n;
       }
     } catch (e) {
       warn(
@@ -769,7 +806,41 @@ export async function buildManifest(
         }`,
       );
     }
+    checksByRoot.set(r.id, acc);
   }
+  // project-level roll-up = sum across ALL roots (never silently drops a session)
+  const verificationChecks = {
+    total: 0,
+    byVerdict: {} as Record<string, number>,
+  };
+  for (const acc of checksByRoot.values()) {
+    verificationChecks.total += acc.total;
+    for (const [v, n] of Object.entries(acc.byVerdict)) {
+      verificationChecks.byVerdict[v] = (verificationChecks.byVerdict[v] ?? 0) +
+        n;
+    }
+  }
+  // per-session breakdown: headline, when it started, its own frames + checks
+  const sessions = sessionRoots.map((s) => {
+    const sid = s.id as string;
+    const mine = frames.filter((f) => sessionIdOf(f) === sid);
+    const roleBreakdown: Record<string, number> = {};
+    for (const f of mine) {
+      const role = (f.agent_name ?? "unknown").toUpperCase();
+      roleBreakdown[role] = (roleBreakdown[role] ?? 0) + 1;
+    }
+    return {
+      rootFrameId: sid,
+      headline: s.name ?? null,
+      createdAt: s.created_at ?? null,
+      conversationType: s.conversation_type ?? null,
+      agentName: s.agent_name ?? null,
+      nFrames: mine.length,
+      framesByRole: roleBreakdown,
+      verificationChecks: checksByRoot.get(sid) ??
+        { total: 0, byVerdict: {} as Record<string, number> },
+    };
+  });
 
   // thread turns — counted, NOT captured. Complete named typing; unclassified = tripwire.
   const messages = {
@@ -818,6 +889,7 @@ export async function buildManifest(
     nFrames: frames.length,
     framesByRole,
     verificationChecks,
+    sessions,
     messages,
     missingFiles,
     remoteCompute: remoteComputeUsed,

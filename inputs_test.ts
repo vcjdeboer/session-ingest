@@ -5,8 +5,49 @@
  * containment path); never touches real CS data or real /tmp.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { captureInputs, type Inputs, type InputsSink } from "./inputs.ts";
+import {
+  captureInputs,
+  deriveTmpRoots,
+  type Inputs,
+  type InputsSink,
+} from "./inputs.ts";
 import { preflightSqlite } from "./db.ts";
+
+Deno.test("deriveTmpRoots: distinct top-level /tmp roots from files_read/written trace", () => {
+  const rows = [
+    {
+      files_written: JSON.stringify([
+        { path: "/tmp/quant/ref/seal.fna.gz", sha256: "a" },
+        { path: "/private/tmp/cds/panel.json", sha256: "b" },
+      ]),
+      files_read: JSON.stringify([{ path: "/tmp/quant/idx/x.bin" }]),
+    },
+    {
+      files_written: JSON.stringify([{ path: "/tmp/sel/keep.json" }]),
+      // paths OUTSIDE /tmp must be ignored (handled by capture_corpus, not here)
+      files_read: JSON.stringify([
+        "/Users/x/.claude-science/orgs/o/workspaces/w/handoff/meta.json",
+      ]),
+    },
+  ];
+  assertEquals(deriveTmpRoots(rows), [
+    "/private/tmp/cds",
+    "/tmp/quant",
+    "/tmp/sel",
+  ]);
+});
+
+Deno.test("deriveTmpRoots: tolerant of null/malformed/empty trace", () => {
+  assertEquals(deriveTmpRoots([]), []);
+  assertEquals(
+    deriveTmpRoots([
+      { files_written: null, files_read: undefined },
+      { files_written: "not json", files_read: "{}" },
+      { files_written: JSON.stringify([{ nope: 1 }]) },
+    ]),
+    [],
+  );
+});
 
 const HAVE = (await preflightSqlite()).ok;
 const enc = (s: string) => new TextEncoder().encode(s);
