@@ -25,6 +25,11 @@ import { captureHostCalls, HostCallsSchema } from "./hostcalls.ts";
 import { captureReview, ReviewSchema } from "./review.ts";
 import { AnnotationsSchema, captureAnnotations } from "./annotations.ts";
 import { captureSettings, SettingsSchema } from "./settings.ts";
+import {
+  renderHtml,
+  RenderHtmlArgsSchema,
+  VisualSchema,
+} from "./render_html.ts";
 import { captureCorpus, CorpusSchema } from "./corpus.ts";
 import { captureInputs, InputsSchema } from "./inputs.ts";
 import { captureExternal, ExternalSchema } from "./external.ts";
@@ -160,7 +165,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.16",
+  version: "2026.07.11.17",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -227,6 +232,12 @@ export const model = {
         "capture-report: resolve facet versions from bundle refs (works via the real dataRepository) + list figures instead of embedding base64 (fits the report store). No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.07.11.17",
+      description:
+        "Add render_html method (native Deno visual-HTML renderer of the capture-report, figures embedded); replaces the standalone python tool. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     "manifest": {
@@ -274,6 +285,13 @@ export const model = {
       schema: SettingsSchema,
       lifetime: "infinite",
       garbageCollection: 100,
+    },
+    "visual": {
+      description:
+        "Provenance record for a render_html run: the .html path written, its size, and how many figures were embedded. The HTML itself is a file on disk (the visual companion to the capture-report). Instance key = proj_id.",
+      schema: VisualSchema,
+      lifetime: "30d",
+      garbageCollection: 5,
     },
     "skills": {
       description:
@@ -678,6 +696,31 @@ export const model = {
           orgId,
           { writeResource: context.writeResource, logger: context.logger },
         );
+        return { dataHandles };
+      },
+    },
+    render_html: {
+      description:
+        "Render the VISUAL companion to the capture-report: run the same report over the sealed facets, convert its markdown to a styled self-contained HTML page, and embed the captured PNG figures inline (from the corpus). Writes a single .html file (default <proj_id>_capture_report.html). Reads only sealed swamp data; nothing from the live app.",
+      arguments: RenderHtmlArgsSchema,
+      execute: async (
+        args: z.infer<typeof RenderHtmlArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const { dataHandles } = await renderHtml(args, {
+          writeResource: context.writeResource,
+          logger: context.logger,
+        });
         return { dataHandles };
       },
     },

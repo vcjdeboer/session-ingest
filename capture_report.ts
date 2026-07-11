@@ -395,7 +395,7 @@ export const report = {
         1,
       );
       if (bytes && isPng(bytes)) {
-        figures.push({ sha: sha.slice(0, 12), kb: Math.round(size / 1024) });
+        figures.push({ sha, kb: Math.round(size / 1024) });
       }
     }
 
@@ -630,7 +630,7 @@ export const report = {
 
     md.push(`\n## Captured figures (${figures.length})\n`);
     for (const f of figures) {
-      md.push(`- \`${f.sha}\` — ${f.kb} KB (PNG)`);
+      md.push(`- \`${f.sha.slice(0, 12)}\` — ${f.kb} KB (PNG)`);
     }
 
     return {
@@ -687,6 +687,7 @@ export const report = {
           origin: a.origin,
         })),
         prompts,
+        figures,
         figuresEmbedded: figures.length,
       },
     };

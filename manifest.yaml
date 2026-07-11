@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@vcjdeboer/session-ingest"
-version: "2026.07.11.16"
+version: "2026.07.11.17"
 description: "Lift your own Claude Science (operon) sessions out of the local operon-cli.db into open, replayable, sealable swamp records: a typed transcript, a turn->execution->artifact->env provenance graph, an immutable content-addressed byte corpus, the FULL ordered cell script, the CS skills the session used, its replayable host.* calls, a Tier-1 /private/tmp input freeze, a per-source external-data inventory, a presence-only credential manifest, and reproducible Docker + Nix environment locks — then `seal` an order-stable bundle-manifest (witness-digested). With @vcjdeboer/session-execute run-notebook + a host-replay shim, a captured session RE-RUNS outside the app. Reads a disposable scrubbed clone (secret tables dropped and never decrypted; explicit column allow-list; refuses a mid-run session), read-only, deterministic. Anti-lock-in data portability for your own local sessions."
 repository: "https://github.com/vcjdeboer/session-ingest"
 
