@@ -36,6 +36,9 @@ export const CANONICAL_ORDER = [
   "host_calls",
   // Appended (.11.11): the independent reviewer's sealed verdicts (capture_review).
   "review",
+  // Appended (.11.13): user annotations (comments/bookmarks) + run settings.
+  "annotations",
+  "settings",
 ] as const;
 
 /** One sealable resource: its spec name, swamp content checksum, and content-ref. */
@@ -209,6 +212,14 @@ export async function runSeal(
 ): Promise<{ dataHandles: unknown[] }> {
   const enumerate = args._enumerate ?? defaultEnumerate(context);
   const present = await enumerate(args.session);
+  // Facets are keyed by proj_id. Passing a session NAME finds nothing and would
+  // silently seal an empty bundle — refuse that footgun with a clear message.
+  if (present.length === 0) {
+    throw new Error(
+      `no captured facets found for session "${args.session}" — pass the proj_id ` +
+        `(e.g. proj_abc123), not the project name; every capture resource is keyed by proj_id.`,
+    );
+  }
   const verdict = args._verdict ?? null;
   const origin = {
     tool: "session-ingest",

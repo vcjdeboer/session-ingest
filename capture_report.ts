@@ -247,6 +247,8 @@ export const report = {
     const skillsFacet = await readFacet("skills");
     const lockFacet = await readFacet("lockenv");
     const reviewFacet = await readFacet("review");
+    const annFacet = await readFacet("annotations");
+    const settingsFacet = await readFacet("settings");
 
     // ---- tools, packages & skills (mined from the sealed cells/skills/lockenv) ----
     const rawCells = (cellsFacet?.cells as Array<Record<string, unknown>>) ??
@@ -295,6 +297,17 @@ export const report = {
         if (txt && !txt.startsWith("[System]") && !txt.startsWith("<")) {
           prompts.push(txt);
         }
+      }
+    }
+
+    // ---- conclusion: the LAST main-thread (depth 0) assistant turn. The reviewer
+    // runs as a sub-agent (depth > 0) AFTER the conclusion, so the last turn
+    // overall is often the reviewer's sign-off — not the answer. depth 0 skips it.
+    let conclusion = "";
+    for (const t of turns) {
+      if (t.type === "assistant" && String(t.depth ?? "") === "0") {
+        const txt = turnText(t);
+        if (txt) conclusion = txt;
       }
     }
 
@@ -355,6 +368,80 @@ export const report = {
         msg.userTyped ?? prompts.length
       }** your prompts · **${manifest?.nDistinctEnvs ?? "?"}** conda envs\n`,
     );
+
+    if (conclusion) {
+      md.push(`## The conclusion\n`);
+      md.push(
+        `_The main agent's final answer (last depth-0 turn — after this the reviewer signed off):_\n`,
+      );
+      md.push(
+        conclusion.length > 1600 ? conclusion.slice(0, 1600) + "…" : conclusion,
+      );
+      md.push("");
+    }
+
+    // ---- how it was run (settings facet) ----
+    if (settingsFacet) {
+      const tl = settingsFacet.timeline as Record<string, unknown> | undefined;
+      const models = (settingsFacet.models as Array<Record<string, unknown>>) ??
+        [];
+      const deleg =
+        (settingsFacet.delegation as Array<Record<string, unknown>>) ??
+          [];
+      const toggles =
+        (settingsFacet.toggles as Array<Record<string, unknown>>) ??
+          [];
+      const specs =
+        (settingsFacet.specialists as Array<Record<string, unknown>>) ??
+          [];
+      md.push(`## How it was run\n`);
+      if (tl?.startedAt) {
+        const mins = tl.durationMs
+          ? Math.round(Number(tl.durationMs) / 60000)
+          : null;
+        md.push(
+          `**Timeline** — ${
+            new Date(Number(tl.startedAt)).toISOString().slice(0, 16).replace(
+              "T",
+              " ",
+            )
+          } → ${new Date(Number(tl.endedAt)).toISOString().slice(11, 16)}${
+            mins != null ? ` (${mins} min)` : ""
+          } · ${tl.nFrames} frames\n`,
+        );
+      }
+      if (models.length) {
+        md.push(
+          `**Model** — ` +
+            models.map((m) =>
+              `\`${m.model}\`${m.effort ? ` (${m.effort})` : ""} ×${m.count}`
+            ).join(" · ") + "\n",
+        );
+      }
+      if (deleg.length) {
+        md.push(
+          `**Delegation** — ` +
+            deleg.map((d) => `\`${d.delegate}\` ×${d.count}`).join(" · ") +
+            "\n",
+        );
+      }
+      if (toggles.length) {
+        md.push(
+          `**Toggles** — ` +
+            toggles.map((t) => `${t.key}: ${t.enabled ? "on" : "off"}`).join(
+              " · ",
+            ) + "\n",
+        );
+      }
+      if (specs.length) {
+        md.push(
+          `**Specialists** — ` +
+            specs.map((s) => `\`${s.agent}\`${s.enabled ? "" : " (off)"}`).join(
+              " · ",
+            ) + "\n",
+        );
+      }
+    }
 
     md.push(`## Tools, packages & skills\n`);
     if (tools.cli.length) {
@@ -430,6 +517,25 @@ export const report = {
     md.push(`## Your prompts (${prompts.length}, verbatim)\n`);
     for (const p of prompts) md.push(`- ${p.replace(/\n+/g, " ")}`);
 
+    // ---- your annotations (comments + bookmarks) ----
+    const anns = (annFacet?.annotations as Array<Record<string, unknown>>) ??
+      [];
+    if (anns.length) {
+      md.push(`\n## Your annotations (${anns.length})\n`);
+      for (const a of anns) {
+        const where = a.toolName
+          ? `on \`${a.toolName}\``
+          : a.messageIndex != null
+          ? `at message ${a.messageIndex}`
+          : "";
+        md.push(
+          `- **${String(a.kind)}** ${where} — “${
+            String(a.anchorText ?? "").slice(0, 60)
+          }”${a.note ? ` · _${String(a.note).replace(/\n+/g, " ")}_` : ""}`,
+        );
+      }
+    }
+
     md.push(`\n## Captured figures (${figures.length})\n`);
     for (const f of figures) {
       md.push(`![captured figure ${f.sha} — ${f.kb} KB](${f.dataUri})\n`);
@@ -468,6 +574,22 @@ export const report = {
           environments: envs,
           skills,
         },
+        conclusion,
+        settings: settingsFacet
+          ? {
+            timeline: settingsFacet.timeline,
+            models: settingsFacet.models,
+            delegation: settingsFacet.delegation,
+            toggles: settingsFacet.toggles,
+            specialists: settingsFacet.specialists,
+          }
+          : null,
+        annotations: anns.map((a) => ({
+          kind: a.kind,
+          anchorText: a.anchorText,
+          note: a.note,
+          origin: a.origin,
+        })),
         prompts,
         figuresEmbedded: figures.length,
       },

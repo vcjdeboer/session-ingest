@@ -23,6 +23,8 @@ import { captureCells, CellsSchema } from "./cells.ts";
 import { captureSkills, SkillsSchema } from "./skills.ts";
 import { captureHostCalls, HostCallsSchema } from "./hostcalls.ts";
 import { captureReview, ReviewSchema } from "./review.ts";
+import { AnnotationsSchema, captureAnnotations } from "./annotations.ts";
+import { captureSettings, SettingsSchema } from "./settings.ts";
 import { captureCorpus, CorpusSchema } from "./corpus.ts";
 import { captureInputs, InputsSchema } from "./inputs.ts";
 import { captureExternal, ExternalSchema } from "./external.ts";
@@ -158,7 +160,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.12",
+  version: "2026.07.11.13",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -190,15 +192,21 @@ export const model = {
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
     {
+      toVersion: "2026.07.11.11",
+      description:
+        "Add capture_review (seal the independent reviewer's verification_checks) + review facet in the seal; capture-report renders the sealed reviewer detail; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
       toVersion: "2026.07.11.12",
       description:
         "capture-report: add required `name` field so the report loads; render sealed review detail; no globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
     {
-      toVersion: "2026.07.11.11",
+      toVersion: "2026.07.11.13",
       description:
-        "Add capture_review (seal the independent reviewer's verification_checks) + review facet in the seal; capture-report renders the sealed reviewer detail; no globalArguments change.",
+        "Add capture_annotations (artifact comments + thread bookmarks) + capture_settings (model/effort, delegation, compute, timeline, toggles, specialists); both in the seal; seal refuses an empty bundle (name-vs-proj_id guard); capture-report gains conclusion/annotations/settings. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -233,6 +241,21 @@ export const model = {
       lifetime: "infinite",
       garbageCollection: 100,
       sensitive: true,
+    },
+    "annotations": {
+      description:
+        "SENSITIVE: the user's own marks on a session — artifact COMMENTS + thread BOOKMARKS/highlights (kind, anchor, note, offsets, origin, timestamps). anchor_text/note are user prose. Instance key = proj_id.",
+      schema: AnnotationsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "settings": {
+      description:
+        "HOW the session was run: LLM model(s) + effort, delegation (sub-agents like the reviewer), compute target, the session timeline (first→last frame), the user capability toggles (memory/delegation/auto-review) and bundled specialist agents. Counts + flags only, never a credential. Instance key = proj_id.",
+      schema: SettingsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
     },
     "skills": {
       description:
@@ -574,6 +597,64 @@ export const model = {
         const csRoot = resolveCsRoot(args, context.globalArgs);
         const orgId = args.orgId || context.globalArgs.orgId || undefined;
         const { dataHandles } = await captureReview(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_annotations: {
+      description:
+        "Freeze a QUIESCENT session's USER ANNOTATIONS — artifact comments + thread bookmarks/highlights (transcript_annotations: kind/anchor/note/offsets/origin/timestamps) — into a SENSITIVE `annotations` resource. anchor_text/note are user prose, never a credential. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureAnnotations(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_settings: {
+      description:
+        "Freeze HOW a QUIESCENT session was run into a `settings` resource — the LLM model(s)+effort, delegation (reviewer/sub-agents), compute target, session timeline, the user capability toggles (memory/delegation/auto-review) and bundled specialists. Counts + flags only, never a credential. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureSettings(
           csRoot,
           args.project,
           orgId,

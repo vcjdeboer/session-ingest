@@ -166,6 +166,23 @@ export const QUERIES = {
   review_checks: (pid: string) =>
     `SELECT id,verdict,severity,claim,evidence,reviewer_model,reviewer_kind,status,created_at ` +
     `FROM verification_checks WHERE root_frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY created_at,id`,
+  // annotations: the user's artifact COMMENTS + thread BOOKMARKS/highlights for this project.
+  // anchor_text/note are user prose (SENSITIVE). Scoped by root_frame_id ∈ project frames. pid gated.
+  annotations: (pid: string) =>
+    `SELECT id,kind,source,tool_name,message_uuid,message_index,block_index,anchor_text,start_offset,end_offset,note,origin,created_at,updated_at ` +
+    `FROM transcript_annotations WHERE root_frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY created_at,id`,
+  // settings: per-frame run configuration — model/effort, delegation (delegate_name), compute
+  // target (compute_enabled), agent, timestamps. Aggregated in TS. pid gated. Single-table read.
+  settings_frames: (pid: string) =>
+    `SELECT model,effort,delegate_name,agent_name,compute_enabled,conversation_type,created_at ` +
+    `FROM frames WHERE project_id='${pid}' ORDER BY created_at,id`,
+  // settings: the user's capability toggles (memory / delegation / auto-review …). User-scoped
+  // (no project column) — records the environment the session ran in. Non-secret flags only.
+  capability_settings_all: () =>
+    `SELECT kind,key,enabled,updated_at FROM capability_settings ORDER BY kind,key`,
+  // settings: bundled specialist agents and whether each is enabled. User-scoped. Non-secret.
+  bundled_agents_all: () =>
+    `SELECT agent_name,enabled,updated_at FROM bundled_agent_settings ORDER BY agent_name`,
 } as const;
 
 /* ============================ env snapshot parse (shared) ============================ */
