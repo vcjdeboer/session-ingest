@@ -157,7 +157,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.9",
+  version: "2026.07.11.10",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -180,6 +180,12 @@ export const model = {
       toVersion: "2026.07.11.9",
       description:
         "capture_inputs.roots optional — auto-derives /tmp roots from the session trace; no globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.10",
+      description:
+        "Add the capture-report report (facets, tools/skills, reviewer tally, prompts, figures); no globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
