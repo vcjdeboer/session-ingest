@@ -163,7 +163,7 @@ async function readJson(
 export const report = {
   name: "@vcjdeboer/capture-report",
   description:
-    "Render a captured CS session (session-ingest facets) into a readable report: sealed facets, the tools/packages/skills the session loaded, the independent reviewer's detail, your verbatim prompts, and a few captured figures embedded inline. Reads only sealed swamp data.",
+    "Render a captured CS session (session-ingest facets) into a readable report: the narrative arc (research question -> plan -> conclusion), the tools/packages/skills the session loaded, the independent reviewer's detail, your verbatim prompts, and a few captured figures embedded inline. Reads only sealed swamp data.",
   scope: "method" as const,
   labels: ["capture", "session-ingest", "provenance"],
 
@@ -249,6 +249,57 @@ export const report = {
     const reviewFacet = await readFacet("review");
     const annFacet = await readFacet("annotations");
     const settingsFacet = await readFacet("settings");
+
+    // ---- the plan artifact (RQ + intent + task list). CS saves a `plan_*.json`
+    // artifact with task_summary (the research question) and phases→steps (the plan);
+    // it lives in the sealed corpus, so we read its bytes by checksum. ----
+    let plan:
+      | {
+        rq: string;
+        steps: Array<{ title: string; description: string }>;
+        outputs: string[];
+      }
+      | null = null;
+    {
+      const arts = (corpus?.artifacts as Array<Record<string, unknown>>) ?? [];
+      const planArt = arts.find((a) =>
+        String(a.storagePath ?? "").includes("plan_") &&
+        (a.present === true || a.present === "True")
+      );
+      if (planArt?.checksum) {
+        const bytes = await ctx.dataRepository.getContent(
+          modelType,
+          modelId,
+          String(planArt.checksum),
+          1,
+        );
+        if (bytes) {
+          try {
+            const pj = JSON.parse(dec.decode(bytes)) as Record<string, unknown>;
+            const steps = ((pj.phases as Array<Record<string, unknown>>) ?? [])
+              .flatMap((ph) =>
+                ((ph.delegations as Array<Record<string, unknown>>) ?? [])
+                  .flatMap((dl) =>
+                    (dl.steps as Array<Record<string, unknown>>) ?? []
+                  )
+              );
+            const outs = (pj.desired_outputs as Array<unknown>) ?? [];
+            plan = {
+              rq: String(pj.task_summary ?? ""),
+              steps: steps.map((s) => ({
+                title: String(s.title ?? ""),
+                description: String(s.description ?? ""),
+              })),
+              outputs: outs.map((o) =>
+                typeof o === "string"
+                  ? o
+                  : String((o as Record<string, unknown>)?.name ?? "")
+              ).filter(Boolean),
+            };
+          } catch { /* not the structured plan shape */ }
+        }
+      }
+    }
 
     // ---- tools, packages & skills (mined from the sealed cells/skills/lockenv) ----
     const rawCells = (cellsFacet?.cells as Array<Record<string, unknown>>) ??
@@ -368,6 +419,30 @@ export const report = {
         msg.userTyped ?? prompts.length
       }** your prompts · **${manifest?.nDistinctEnvs ?? "?"}** conda envs\n`,
     );
+
+    // ---- the narrative arc: research question → plan → conclusion ----
+    const rq = plan?.rq || prompts[0] || "";
+    if (rq) {
+      md.push(`## Research question\n`);
+      md.push(`> ${rq.replace(/\n+/g, " ")}\n`);
+    }
+    if (plan?.steps.length) {
+      md.push(`## The plan (${plan.steps.length} steps)\n`);
+      plan.steps.forEach((s, i) => {
+        md.push(
+          `${i + 1}. **${s.title}** — ${
+            s.description.replace(/\n+/g, " ").slice(0, 220)
+          }${s.description.length > 220 ? "…" : ""}`,
+        );
+      });
+      if (plan.outputs.length) {
+        md.push(
+          `\n_Desired outputs:_ ${
+            plan.outputs.map((o) => `\`${o}\``).join(", ")
+          }\n`,
+        );
+      }
+    }
 
     if (conclusion) {
       md.push(`## The conclusion\n`);
@@ -574,6 +649,10 @@ export const report = {
           environments: envs,
           skills,
         },
+        researchQuestion: rq,
+        plan: plan
+          ? { steps: plan.steps.map((s) => s.title), outputs: plan.outputs }
+          : null,
         conclusion,
         settings: settingsFacet
           ? {

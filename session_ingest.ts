@@ -160,7 +160,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.13",
+  version: "2026.07.11.14",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -207,6 +207,12 @@ export const model = {
       toVersion: "2026.07.11.13",
       description:
         "Add capture_annotations (artifact comments + thread bookmarks) + capture_settings (model/effort, delegation, compute, timeline, toggles, specialists); both in the seal; seal refuses an empty bundle (name-vs-proj_id guard); capture-report gains conclusion/annotations/settings. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.11.14",
+      description:
+        "capture-report gains the narrative arc: research question + plan (from the sealed plan_*.json artifact) alongside the conclusion. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
