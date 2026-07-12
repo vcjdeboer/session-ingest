@@ -183,6 +183,39 @@ export const QUERIES = {
   // settings: bundled specialist agents and whether each is enabled. User-scoped. Non-secret.
   bundled_agents_all: () =>
     `SELECT agent_name,enabled,updated_at FROM bundled_agent_settings ORDER BY agent_name`,
+  // notifications: parent<->child delegation messages within this project's frame tree
+  // (host.delegate coordination). payload is analysis/coordination prose (SENSITIVE), never a
+  // credential. Scoped by root_frame_id in project frames. pid gated PROJ_ID_RE.
+  notifications_by_project: (pid: string) =>
+    `SELECT id,sender_frame_id,recipient_frame_id,root_frame_id,notification_type,payload,read_at,created_at ` +
+    `FROM notifications WHERE root_frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY created_at,id`,
+  // provenance: the NORMALIZED artifact->artifact dependency edges (version->version), the
+  // authoritative DAG edges CS records — more precise than dependency_mappings (artifact-level,
+  // partial). Scoped to this project's versions. pid gated PROJ_ID_RE.
+  artifact_dependency_edges: (pid: string) =>
+    `SELECT artifact_version_id,depends_on_version_id,reference_name ` +
+    `FROM artifact_dependencies WHERE artifact_version_id IN (SELECT id FROM artifact_versions WHERE storage_path LIKE '${pid}/%') ORDER BY artifact_version_id,depends_on_version_id`,
+  // extras: remote-compute jobs this project ran (GPU/CPU tier, provider, remote handle) — the
+  // environment provenance for offloaded work. Scoped by project_id. pid gated PROJ_ID_RE.
+  compute_usage_by_project: (pid: string) =>
+    `SELECT job_id,environment,tier_type,provider,frame_id,state,remote_workdir,submit_cell_id,started_at,ended_at,expires_at ` +
+    `FROM compute_usage WHERE project_id='${pid}' ORDER BY started_at,job_id`,
+  // extras: the falsifiable claims extracted from this session (incl. unchecked ones, which
+  // verification_checks omits). claim_text/entities are analysis prose (SENSITIVE). Scoped by
+  // root_frame_id in project frames. pid gated PROJ_ID_RE.
+  session_claims_by_project: (pid: string) =>
+    `SELECT id,frame_id,step_id,claim_text,entities,source,created_at ` +
+    `FROM session_claims WHERE root_frame_id IN (SELECT id FROM frames WHERE project_id='${pid}') ORDER BY created_at,id`,
+  // extras: durable agent beliefs scoped to this project (may be absent on some builds — the
+  // extras capture guards per-table). body is analysis prose (SENSITIVE). subject_project_id gated.
+  memories_by_project: (pid: string) =>
+    `SELECT id,body,subject_artifact_id,subject_version_id,subject_frame_id,origin,evidence,superseded_by,last_surfaced_at ` +
+    `FROM memories WHERE subject_project_id='${pid}' ORDER BY id`,
+  // extras: this project's artifact folder organization (structure only, cosmetic). Scoped by
+  // project_id. pid gated PROJ_ID_RE.
+  artifact_folders_by_project: (pid: string) =>
+    `SELECT id,parent_id,name,root_frame_id,is_conversation_folder,is_user_uploads_folder,sort_order ` +
+    `FROM artifact_folders WHERE project_id='${pid}' ORDER BY sort_order,id`,
 } as const;
 
 /* ============================ env snapshot parse (shared) ============================ */

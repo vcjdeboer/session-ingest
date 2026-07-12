@@ -23,6 +23,8 @@ import { captureCells, CellsSchema } from "./cells.ts";
 import { captureSkills, SkillsSchema } from "./skills.ts";
 import { captureHostCalls, HostCallsSchema } from "./hostcalls.ts";
 import { captureReview, ReviewSchema } from "./review.ts";
+import { captureNotifications, NotificationsSchema } from "./notifications.ts";
+import { captureExtras, ExtrasSchema } from "./extras.ts";
 import { AnnotationsSchema, captureAnnotations } from "./annotations.ts";
 import { captureSettings, SettingsSchema } from "./settings.ts";
 import {
@@ -165,7 +167,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.11.17",
+  version: "2026.07.12.1",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -238,6 +240,12 @@ export const model = {
         "Add render_html method (native Deno visual-HTML renderer of the capture-report, figures embedded); replaces the standalone python tool. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.07.12.1",
+      description:
+        "Close ingest gaps found auditing against CS's own schema: capture_notifications (inter-agent host.delegate messages), capture_extras (compute_usage/session_claims/memories/artifact_folders, each guarded), and authoritative version->version provenance edges from artifact_dependencies (more precise than dependency_mappings). No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     "manifest": {
@@ -267,6 +275,22 @@ export const model = {
       description:
         "SENSITIVE: the INDEPENDENT REVIEWER's verdicts — CS's out-of-band verification_checks ({verdict, severity, claim, evidence, reviewerModel} in time order) + the verdict tally. Seals WHAT was reviewed and WHY, so the capture-report shows reviewer detail from sealed data (not just the manifest tally). claim/evidence are analysis prose, never a credential. Instance key = proj_id.",
       schema: ReviewSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "notifications": {
+      description:
+        "SENSITIVE: the PARENT<->CHILD delegation messages (CS `notifications`) exchanged within a session's frame tree when it used host.delegate — the coordination layer (task payloads, results) the per-frame transcript doesn't carry, in time order + a per-type tally. payload is coordination/analysis prose, never a credential. Instance key = proj_id.",
+      schema: NotificationsSchema,
+      lifetime: "infinite",
+      garbageCollection: 100,
+      sensitive: true,
+    },
+    "extras": {
+      description:
+        "SENSITIVE: the lower-frequency CS metadata tables sealed so nothing is silently dropped — remote-compute jobs (`compute_usage`), the falsifiable claims extracted incl. UNCHECKED ones (`session_claims`), durable agent beliefs (`memories`), and artifact folder structure (`artifact_folders`). Each read under its own guard: a table absent on this build degrades to an empty list + a warning. Instance key = proj_id.",
+      schema: ExtrasSchema,
       lifetime: "infinite",
       garbageCollection: 100,
       sensitive: true,
@@ -633,6 +657,64 @@ export const model = {
         const csRoot = resolveCsRoot(args, context.globalArgs);
         const orgId = args.orgId || context.globalArgs.orgId || undefined;
         const { dataHandles } = await captureReview(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_notifications: {
+      description:
+        "Freeze a QUIESCENT session's PARENT<->CHILD delegation messages (CS `notifications`: task payloads + results exchanged via host.delegate) into a SENSITIVE `notifications` resource + per-type tally — the coordination layer the per-frame transcript doesn't carry. payload is coordination/analysis prose, never a credential. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureNotifications(
+          csRoot,
+          args.project,
+          orgId,
+          { writeResource: context.writeResource, logger: context.logger },
+        );
+        return { dataHandles };
+      },
+    },
+    capture_extras: {
+      description:
+        "Freeze a QUIESCENT session's lower-frequency metadata (remote-compute jobs `compute_usage`, extracted claims incl. unchecked `session_claims`, durable beliefs `memories`, artifact folder structure `artifact_folders`) into one SENSITIVE `extras` resource so nothing is silently dropped. Each table read under its own guard — absent tables degrade to empty + a warning. Reads a static clone; source never mutated.",
+      arguments: InspectArgsSchema,
+      execute: async (
+        args: z.infer<typeof InspectArgsSchema>,
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            instanceName: string,
+            data: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const csRoot = resolveCsRoot(args, context.globalArgs);
+        const orgId = args.orgId || context.globalArgs.orgId || undefined;
+        const { dataHandles } = await captureExtras(
           csRoot,
           args.project,
           orgId,

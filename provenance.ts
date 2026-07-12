@@ -322,6 +322,42 @@ export async function captureProvenance(
       }
     }
 
+    // ---- artifact -> artifact: NORMALIZED version-precise dependency edges ----
+    // artifact_dependencies is the authoritative version->version DAG CS records
+    // (more precise than the artifact-level dependency_mappings above). Additive
+    // and deduped against dependsOn edges already pushed; degrades if absent.
+    const seenDep = new Set(
+      edges.filter((e) => e.kind === "dependsOn").map((e) =>
+        `${e.from}>${e.to}`
+      ),
+    );
+    let depRows: Row[] = [];
+    try {
+      depRows = (await readClone(
+        clone,
+        QUERIES.artifact_dependency_edges(pid),
+      )) as Row[];
+    } catch (e) {
+      warn(
+        `artifact_dependencies degraded: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    for (const r of depRows) {
+      const from = str(r.artifact_version_id);
+      const to = str(r.depends_on_version_id);
+      if (!from || !to) continue;
+      if (!FRAME_ID_RE.test(from) || !FRAME_ID_RE.test(to)) {
+        warn(`skipping artifact_dependencies edge (bad UUID): ${from}->${to}`);
+        continue;
+      }
+      const key = `${from}>${to}`;
+      if (seenDep.has(key)) continue;
+      seenDep.add(key);
+      pushEdge(from, to, "dependsOn");
+    }
+
     // ---- executions (distinct producing_cell_ids, first-seen order) ----
     for (const logId of seenExec) {
       try {
