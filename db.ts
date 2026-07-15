@@ -706,6 +706,38 @@ export async function resolveProject(
   return hit ? { id: hit.id, name: hit.name ?? null } : null;
 }
 
+/**
+ * List ALL live CS sessions (id + name) for a `status` overview, and report
+ * whether the DB is currently quiescent. Unlike capture, a listing does NOT need
+ * a consistent snapshot, so it NEVER refuses on a changing `-wal` — it reads
+ * read-only and just flags `dbQuiescent`. Reads via `sqlite3 -readonly` (non-mutating).
+ */
+export async function listLiveSessions(
+  csRoot: string,
+  orgId?: string,
+): Promise<
+  { dbQuiescent: boolean; sessions: { id: string; name: string | null }[] }
+> {
+  const pre = await preflightSqlite();
+  if (!pre.ok) throw new Error(pre.error);
+  const { orgDir } = resolveOrgDir(csRoot, orgId);
+  const dbPath = `${orgDir}/operon-cli.db`;
+  if (!(await statMaybe(dbPath))) {
+    throw new Error(`operon-cli.db not found at ${dbPath}`);
+  }
+  let dbQuiescent = true;
+  try {
+    await assertQuiescent(dbPath);
+  } catch {
+    dbQuiescent = false; // actively written (a live session) — fine for a listing
+  }
+  const rows = await query(dbPath, "projects_all");
+  const sessions = rows
+    .map((r) => ProjectRow.parse(r))
+    .map((p) => ({ id: p.id, name: p.name ?? null }));
+  return { dbQuiescent, sessions };
+}
+
 /** Build the read-only inspect manifest for a quiescent DB. */
 export async function buildManifest(
   csRoot: string,

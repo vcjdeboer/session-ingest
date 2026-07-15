@@ -38,6 +38,7 @@ import { captureExternal, ExternalSchema } from "./external.ts";
 import { captureCredentials, CredentialsSchema } from "./credentials.ts";
 import { lockEnv, LockEnvSchema } from "./lockenv.ts";
 import { BundleManifestSchema, runSeal, SealArgsSchema } from "./bundle.ts";
+import { runStatus, StatusArgsSchema, StatusSchema } from "./status.ts";
 
 /** Parse a JSON-array-string method arg into a non-empty string[] (throws a clear error). */
 function parseJsonStringArray(name: string, raw: string): string[] {
@@ -128,7 +129,7 @@ const ManifestSchema = z.object({
 });
 
 function resolveCsRoot(
-  args: z.infer<typeof InspectArgsSchema>,
+  args: { csRoot?: string },
   g: GlobalArgs,
 ): string {
   const explicit = args.csRoot || g.csRoot;
@@ -167,7 +168,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.15.1",
+  version: "2026.07.15.2",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -252,6 +253,12 @@ export const model = {
         "capture-report scoping fix: inspect-only (unsealed `manifest`) sessions are now candidates and resolve to THEMSELVES; a requested project never falls back to a different session's sealed bundle (previously an `inspect` on session A rendered the only sealed session B); absent requested project → scoped not-found; honest 'inspected (unsealed)' header + `sealed` flag in the report JSON. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.07.15.2",
+      description:
+        "Add `status` method: a read-only reconciliation of what is LIVE on Claude Science (operon-cli.db sessions) vs captured LOCALLY in swamp (per session: sealed / inspected / partial + facets), with liveAndCaptured / liveNotCaptured / capturedNotLive buckets. Lenient on quiescence — a listing never refuses on a pinging `-wal`, it just flags `dbQuiescent`. Writes a `status` resource. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     "manifest": {
@@ -260,6 +267,13 @@ export const model = {
       schema: ManifestSchema,
       lifetime: "infinite",
       garbageCollection: 100,
+    },
+    "status": {
+      description:
+        'Read-only reconciliation of LIVE Claude Science sessions (operon-cli.db) vs LOCAL swamp captures: per session a state (sealed | inspected | partial) + facets, plus liveAndCaptured / liveNotCaptured / capturedNotLive buckets and a `dbQuiescent` flag. A repo-wide overview, not per-session. Instance key = "status".',
+      schema: StatusSchema,
+      lifetime: "infinite",
+      garbageCollection: 20,
     },
     "cells": {
       description:
@@ -1061,6 +1075,30 @@ export const model = {
         "Seal a captured session (#29): read each captured resource's swamp content checksum in canonical order, assemble the order-stable `bundle-manifest` (items + reproducibility stamp + origin). The independent witness DIGEST over these items is produced by @vcjdeboer/session-witness seal_manifest, wired by the seal-bundle workflow. Reads in-process via queryData; writes only its own bundle-manifest.",
       arguments: SealArgsSchema,
       execute: runSeal,
+    },
+    status: {
+      description:
+        "Read-only reconciliation of what is LIVE on Claude Science (operon-cli.db sessions) vs captured LOCALLY in swamp (per session: sealed | inspected | partial + facets). Buckets into liveAndCaptured / liveNotCaptured / capturedNotLive and flags `dbQuiescent`. NEVER refuses on a pinging DB — a listing needs no consistent snapshot. Writes a repo-wide `status` resource.",
+      arguments: StatusArgsSchema,
+      execute: (
+        args: z.infer<typeof StatusArgsSchema>,
+        context: {
+          modelId: string;
+          globalArgs: GlobalArgs;
+          writeResource: (
+            s: string,
+            i: string,
+            d: unknown,
+          ) => Promise<{ version: number }>;
+          logger: {
+            info: (m: string, p?: Record<string, unknown>) => void;
+          };
+        },
+      ) =>
+        runStatus(
+          { ...args, csRoot: resolveCsRoot(args, context.globalArgs) },
+          context,
+        ),
     },
   },
 };

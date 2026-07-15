@@ -134,7 +134,7 @@ interface SealContext {
 }
 
 /** Shell out to the swamp CLI and parse its JSON, or null (witness's pattern). */
-async function swampJson(args: string[]): Promise<unknown> {
+export async function swampJson(args: string[]): Promise<unknown> {
   try {
     const out = await new Deno.Command("swamp", {
       args,
