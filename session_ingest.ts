@@ -167,7 +167,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.12.1",
+  version: "2026.07.15.1",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -244,6 +244,12 @@ export const model = {
       toVersion: "2026.07.12.1",
       description:
         "Close ingest gaps found auditing against CS's own schema: capture_notifications (inter-agent host.delegate messages), capture_extras (compute_usage/session_claims/memories/artifact_folders, each guarded), and authoritative version->version provenance edges from artifact_dependencies (more precise than dependency_mappings). No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.15.1",
+      description:
+        "capture-report scoping fix: inspect-only (unsealed `manifest`) sessions are now candidates and resolve to THEMSELVES; a requested project never falls back to a different session's sealed bundle (previously an `inspect` on session A rendered the only sealed session B); absent requested project → scoped not-found; honest 'inspected (unsealed)' header + `sealed` flag in the report JSON. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

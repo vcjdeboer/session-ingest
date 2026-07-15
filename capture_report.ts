@@ -170,17 +170,27 @@ export const report = {
     const latestSpec = (name: string, spec: string) =>
       all.filter((d) => d.name === name && d.tags?.specName === spec)
         .sort((a, b) => b.version - a.version)[0];
+    // Sessions that have been SEALED carry a `bundle-manifest` and the full report.
+    // `inspect` only writes a `manifest`, so an inspected-but-unsealed session is a
+    // candidate too — and must resolve to ITSELF, never fall back to another
+    // session's sealed bundle.
+    const sealedNames = new Set(
+      all.filter((d) => d.tags?.specName === "bundle-manifest").map((d) =>
+        d.name
+      ),
+    );
     const sessionNames = [
       ...new Set(
-        all.filter((d) => d.tags?.specName === "bundle-manifest").map((d) =>
-          d.name
-        ),
+        all.filter((d) =>
+          d.tags?.specName === "bundle-manifest" ||
+          d.tags?.specName === "manifest"
+        ).map((d) => d.name),
       ),
     ];
     if (!sessionNames.length) {
       return {
         markdown:
-          "# Capture report\n\n_No captured session (bundle-manifest) found for this model._\n",
+          "# Capture report\n\n_No captured session (manifest) found for this model._\n",
         json: { error: "no captured session" },
       };
     }
@@ -217,15 +227,29 @@ export const report = {
       }
     }
     if (!matched) {
-      // no explicit match → newest bundle-manifest wins
-      resourceName = sessionNames
+      if (wantProj) {
+        // A project was explicitly requested but nothing matches it. Do NOT render
+        // a different session under its name — that silently mislabels one capture
+        // as another (e.g. an `inspect` on session A rendering sealed session B).
+        return {
+          markdown:
+            `# Capture report — ${wantProj}\n\n_No captured session matches \`${wantProj}\` in this model — it may not have been captured or sealed yet._\n`,
+          json: { error: "session not found", requested: wantProj },
+        };
+      }
+      // No project requested → newest bundle wins (prefer a sealed bundle; else the
+      // newest inspected manifest).
+      const pool = sealedNames.size ? [...sealedNames] : sessionNames;
+      resourceName = pool
         .map((rn) => ({
           rn,
-          v: latestSpec(rn, "bundle-manifest")?.version ?? 0,
+          v: latestSpec(rn, "bundle-manifest")?.version ??
+            latestSpec(rn, "manifest")?.version ?? 0,
         }))
         .sort((a, b) => b.v - a.v)[0].rn;
       manifest = (await nameOf(resourceName)).man;
     }
+    const isSealed = sealedNames.has(resourceName);
 
     // The bundle-manifest is the LATEST version of the resource. Real
     // dataRepository.findAllForModel only surfaces the latest version per name,
@@ -402,19 +426,25 @@ export const report = {
     // ---- markdown ----
     const md: string[] = [];
     md.push(`# Capture report — ${sessionName}`);
-    md.push(
-      `\n_Sealed session-ingest bundle · ${items.length} facets · stamp \`${
-        String(bundle.stamp ?? "?")
-      }\`_\n`,
-    );
-    md.push(`## What was captured\n`);
-    md.push(`| facet | checksum |`);
-    md.push(`| --- | --- |`);
-    for (const it of items) {
+    if (isSealed) {
       md.push(
-        `| ${it.name} | \`${
-          String((it as { checksum?: string }).checksum ?? "").slice(0, 12)
-        }\` |`,
+        `\n_Sealed session-ingest bundle · ${items.length} facets · stamp \`${
+          String(bundle.stamp ?? "?")
+        }\`_\n`,
+      );
+      md.push(`## What was captured\n`);
+      md.push(`| facet | checksum |`);
+      md.push(`| --- | --- |`);
+      for (const it of items) {
+        md.push(
+          `| ${it.name} | \`${
+            String((it as { checksum?: string }).checksum ?? "").slice(0, 12)
+          }\` |`,
+        );
+      }
+    } else {
+      md.push(
+        `\n_Inspected (unsealed) — manifest only, no sealed facets. Run \`capture_*\` + \`seal\` for the full report (verbatim prompts, tools, plan, figures)._\n`,
       );
     }
     // Counts — prefer the manifest; else derive from the sealed facets so the
@@ -638,6 +668,7 @@ export const report = {
       json: {
         session: sessionName,
         resource: resourceName,
+        sealed: isSealed,
         facets: items.map((i) => i.name),
         stamp: bundle.stamp ?? null,
         counts: {

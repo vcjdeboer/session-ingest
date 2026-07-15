@@ -39,6 +39,86 @@ Deno.test("capture-report: empty model → no-session message", async () => {
   assertEquals(res.json.error, "no captured session");
 });
 
+Deno.test("capture-report: inspect-only session resolves to itself, never the sealed bundle", async () => {
+  // Reproduces the bug: the model has ONE sealed session (gdh, with a
+  // bundle-manifest) and one INSPECT-only session (sirt, a `manifest` facet and
+  // no bundle-manifest). Asking for the inspected session must render IT — not
+  // fall back to the unrelated sealed bundle.
+  const sealed = "proj_gdh";
+  const inspected = "proj_sirt";
+  const store = {
+    [sealed]: {
+      1: { origin: { project: { id: sealed, name: "gdh" } } },
+      2: {
+        items: [{ name: "transcript", ref: `transcript/${sealed}@3`, checksum: "t" }],
+        stamp: "witnessed",
+      },
+      3: {
+        origin: { project: { id: sealed, name: "gdh" } },
+        turns: [{ type: "userTyped", blocks: [{ type: "text", text: "gdh only prompt" }] }],
+      },
+    },
+    [inspected]: {
+      1: {
+        origin: { project: { id: inspected, name: "sirt3 - 4 and 5" } },
+        messages: { total: 4341, userTyped: 101 },
+        artifacts: { distinct: 233 },
+        nDistinctEnvs: 3,
+        nFrames: 171,
+        verificationChecks: { total: 91, byVerdict: { fail: 17, warn: 50, pass: 24 } },
+      },
+    },
+  };
+  const specs = [
+    { name: sealed, version: 1, specName: "manifest" },
+    { name: sealed, version: 2, specName: "bundle-manifest" },
+    { name: sealed, version: 3, specName: "transcript" },
+    { name: inspected, version: 1, specName: "manifest" }, // inspect-only: NO bundle-manifest
+  ];
+  const res = await report.execute({
+    modelType: "@vcjdeboer/session-ingest",
+    modelId: "m",
+    dataRepository: mockRepo(store, specs),
+    methodArgs: { project: inspected },
+  });
+  // renders the inspected session…
+  assertEquals((res.json as Record<string, unknown>).session, "sirt3 - 4 and 5");
+  assert(res.markdown.includes("sirt3 - 4 and 5"));
+  // …its own manifest counts (4341 messages, 91-check tally)…
+  assert(res.markdown.includes("4341"), "inspected message count");
+  assert(res.markdown.includes("91"), "inspected reviewer total");
+  // …and NEVER leaks the other (sealed) session's content…
+  assert(!res.markdown.includes("gdh only prompt"), "must not leak the sealed session");
+  assert(res.json.session !== "gdh", "must not resolve to the sealed bundle");
+  // …and is honest that it isn't a sealed bundle.
+  assert(
+    /inspect|not sealed|unsealed/i.test(res.markdown),
+    "should mark the session as inspected/unsealed",
+  );
+});
+
+Deno.test("capture-report: requested project absent → scoped not-found, not a wrong render", async () => {
+  const sealed = "proj_gdh";
+  const store = {
+    [sealed]: {
+      1: { origin: { project: { id: sealed, name: "gdh" } } },
+      2: { items: [], stamp: "witnessed" },
+    },
+  };
+  const specs = [
+    { name: sealed, version: 1, specName: "manifest" },
+    { name: sealed, version: 2, specName: "bundle-manifest" },
+  ];
+  const res = await report.execute({
+    modelType: "@vcjdeboer/session-ingest",
+    modelId: "m",
+    dataRepository: mockRepo(store, specs),
+    methodArgs: { project: "proj_does_not_exist" },
+  });
+  assertEquals(res.json.error, "session not found");
+  assert(!res.markdown.includes("gdh"), "must not render an unrelated session");
+});
+
 Deno.test("capture-report: mines tools, skills, reviewer tally, prompts from sealed facets", async () => {
   const rn = "proj_x";
   const store = {
