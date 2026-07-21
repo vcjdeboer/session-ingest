@@ -9,6 +9,9 @@ import {
   buildManifest,
   classifyTurn,
   cloneDb,
+  CS_LATEST_VALIDATED,
+  CS_VALIDATED_VERSIONS,
+  isValidatedCsVersion,
   preflightSqlite,
   PROJ_ID_RE,
   QUERIES,
@@ -684,6 +687,32 @@ Deno.test({
       await grow;
     } finally {
       await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "CS_VALIDATED_VERSIONS — well-formed record incl. 0.1.20",
+  fn() {
+    // non-empty, newest-first, every entry shaped
+    assert(CS_VALIDATED_VERSIONS.length >= 1);
+    for (const v of CS_VALIDATED_VERSIONS) {
+      assert(v.version.length > 0, "version non-empty");
+      assert(v.channel === "release" || v.channel === "dev", "channel enum");
+      assert(v.validated.length > 0, "validated date present");
+      assert(v.methods.length > 0, "at least one method exercised");
+      assert(v.notes.length > 0, "notes present");
+    }
+    // 0.1.20 (this session's validated build) is recorded and is the newest
+    assertEquals(CS_LATEST_VALIDATED, "0.1.20");
+    assertEquals(CS_VALIDATED_VERSIONS[0].version, "0.1.20");
+    assert(isValidatedCsVersion("0.1.20"));
+    assert(!isValidatedCsVersion("0.0.0-unseen"));
+    // no duplicate version strings
+    const seen = new Set<string>();
+    for (const v of CS_VALIDATED_VERSIONS) {
+      assert(!seen.has(v.version), `duplicate version ${v.version}`);
+      seen.add(v.version);
     }
   },
 });

@@ -168,7 +168,7 @@ const InputsArgsSchema = z.object({
 
 export const model = {
   type: "@vcjdeboer/session-ingest",
-  version: "2026.07.15.2",
+  version: "2026.07.21.1",
   globalArguments: GlobalArgsSchema,
   // globalArguments (csRoot, orgId) are UNCHANGED across .11.6 -> .11.9; these releases
   // only touch OUTPUT/behaviour (.11.7 added manifest.sessions[]; .11.8 extends the seal
@@ -257,6 +257,12 @@ export const model = {
       toVersion: "2026.07.15.2",
       description:
         "Add `status` method: a read-only reconciliation of what is LIVE on Claude Science (operon-cli.db sessions) vs captured LOCALLY in swamp (per session: sealed / inspected / partial + facets), with liveAndCaptured / liveNotCaptured / capturedNotLive buckets. Lenient on quiescence — a listing never refuses on a pinging `-wal`, it just flags `dbQuiescent`. Writes a `status` resource. No globalArguments change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.07.21.1",
+      description:
+        "Record CS version compatibility: db.ts now carries CS_VALIDATED_VERSIONS (+ CS_LATEST_VALIDATED, isValidatedCsVersion) — the empirical list of Claude Science builds this reader has been validated against. Validated against CS 0.1.20 (first public/release-channel build, channel flipped dev->release): status + inspect ran clean with NO operon-cli.db schema drift; the .passthrough()+.optional() row schemas absorbed the build change. Documentation/compat metadata only — no method, output, or globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

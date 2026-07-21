@@ -311,6 +311,64 @@ export function classifyTurn(m: Record<string, unknown>): TurnKind {
   return "unclassified";
 }
 
+/* ==================== CS version compatibility ==================== */
+/**
+ * Claude Science builds this reader has been VALIDATED against, newest first.
+ *
+ * The row schemas below are deliberately `.passthrough()` + `.optional()` so CS
+ * schema DRIFT degrades (extra/renamed/missing columns) instead of throwing —
+ * that is why new CS builds keep parsing without a code change. This list is the
+ * empirical record of the builds we have actually exercised end-to-end, so a
+ * future maintainer knows the tested envelope (and can spot when we're running
+ * blind against an unseen build).
+ *
+ * `version` is the `claude-science --version` build string (the CLI/daemon that
+ * self-updates); the desktop `.app` bundle carries its own separate version.
+ */
+export type CsValidation = {
+  /** `claude-science --version` build string (or `.app` bundle version for dev builds driven via the desktop app). */
+  version: string;
+  /** release channel reported by the build. */
+  channel: "release" | "dev";
+  /** ISO date (or month) we validated. */
+  validated: string;
+  /** ingest methods exercised against this build. */
+  methods: string[];
+  /** result + any schema-drift notes. */
+  notes: string;
+};
+export const CS_VALIDATED_VERSIONS: readonly CsValidation[] = [
+  {
+    version: "0.1.20",
+    channel: "release",
+    validated: "2026-07-21",
+    methods: ["status", "inspect"],
+    notes:
+      "First public/release-channel CLI build (channel flipped dev→release). " +
+      "status (session listing) and inspect (frames + messages + " +
+      "artifact_versions manifest) both ran clean against a 0.1.20-written " +
+      "session (proj_5df392a2cabc, 4 frames / 19 messages / 1 artifact) — NO " +
+      "schema drift; operon-cli.db table shapes unchanged from the 0.1.0-dev line.",
+  },
+  {
+    version: "0.1.0-dev.20260630",
+    channel: "dev",
+    validated: "2026-07",
+    methods: ["inspect", "capture_*", "lock_env", "seal", "render_html"],
+    notes:
+      "Pre-public dev line (desktop .app). The suite was developed and the full " +
+      "capture/seal/replay pipeline proven on this line (gdh, sirt3). Exact " +
+      "per-capture CLI build strings weren't recorded — treat as the dev line, " +
+      "not a single pinned build.",
+  },
+];
+/** The newest CS build this reader has been validated against. */
+export const CS_LATEST_VALIDATED: string = CS_VALIDATED_VERSIONS[0].version;
+/** True if `version` (a `claude-science --version` string) is in the validated set. */
+export function isValidatedCsVersion(version: string): boolean {
+  return CS_VALIDATED_VERSIONS.some((v) => v.version === version);
+}
+
 /* ============================ row schemas ============================ */
 /** Passthrough + optional so CS schema drift degrades instead of throwing. */
 const ProjectRow = z.object({
